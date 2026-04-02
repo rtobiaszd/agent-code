@@ -11,13 +11,14 @@ import { registerFailureAndDecide } from '../execution/failure-policy';
 import { selfHeal } from '../execution/self-heal';
 import { createRepoStabilizationTask } from '../execution/stabilization';
 import { runVerification } from '../execution/verification';
-import { askAndParseJson } from '../models/ollama';
+import { getModelProvider } from '../models';
+import type { ModelProvider } from '../models/provider';
 import { createBacklog, replanTask } from '../planning/planner';
 import { buildExecutorPrompt, buildReviewerPrompt } from '../planning/prompts';
 import { compareRepoHealth, getRepoHealth } from '../repo/health';
 import { buildRepoIndex, buildRepoSnapshot, collectFileContents, loadBlueprint } from '../repo/indexer';
 import { updateMainEvolutionDoc } from '../state/evolution';
-import { getHotFiles, loadMemory, pushHistory, rememberSuccess, saveMemory } from '../state/memory';
+import { getHotFiles, loadMemory, pushHistory, registerProviderMetrics, rememberSuccess, saveMemory } from '../state/memory';
 import type { AgentTask, ImplementationPlan, MemoryState, ReviewResult, RuntimeCycleMetric } from '../types';
 
 function lockFile(): string {
@@ -94,8 +95,9 @@ async function executeTask(input: {
   task: AgentTask;
   blueprint: ReturnType<typeof loadBlueprint>;
   memory: MemoryState;
+  provider: ModelProvider;
 }): Promise<{ implementation: ImplementationPlan; review: ReviewResult; repoDelta: ReturnType<typeof compareRepoHealth> }> {
-  const { task, blueprint, memory } = input;
+  const { task, blueprint, memory, provider } = input;
 
   const fileContexts = collectFileContents(task.files || []);
   const baselineHealth = getRepoHealth(CONFIG, log);
@@ -108,12 +110,22 @@ async function executeTask(input: {
     memory
   });
 
-  const rawImplementation = await askAndParseJson<ImplementationPlan>(
-    CONFIG.MODEL_EXECUTOR,
-    executorPrompt,
-    'executor',
-    isValidImplementation
-  );
+  let rawImplementation: ImplementationPlan;
+  try {
+    rawImplementation = await provider.generateJson<ImplementationPlan>({
+      model: CONFIG.MODEL_EXECUTOR,
+      prompt: executorPrompt,
+      label: 'executor',
+      validator: isValidImplementation
+    });
+  } catch {
+    rawImplementation = await provider.generateJson<ImplementationPlan>({
+      model: CONFIG.MODEL_EXECUTOR_FALLBACK || CONFIG.MODEL_EXECUTOR,
+      prompt: executorPrompt,
+      label: 'executor:fallback',
+      validator: isValidImplementation
+    });
+  }
 
   const implementation = sanitizeImplementation(rawImplementation, task).impl;
 
@@ -125,7 +137,7 @@ async function executeTask(input: {
 
   const quickChecks = runVerification(memory, { mode: 'fast', logger: log });
   if (!quickChecks.ok) {
-    const healed = await selfHeal({ blueprint, task, implementation, memory, baselineHealth });
+    const healed = await selfHeal({ blueprint, task, implementation, memory, baselineHealth, provider });
     if (!healed.ok) {
       throw new Error(healed.lastFailedSummary || quickChecks.summary || 'Self-heal falhou.');
     }
@@ -151,7 +163,22 @@ async function executeTask(input: {
     diff: truncate(git('diff -- .', true), 45000)
   });
 
-  const review = await askAndParseJson<ReviewResult>(CONFIG.MODEL_REVIEWER, reviewPrompt, 'review', isValidReview);
+  let review: ReviewResult;
+  try {
+    review = await provider.generateJson<ReviewResult>({
+      model: CONFIG.MODEL_REVIEWER,
+      prompt: reviewPrompt,
+      label: 'review',
+      validator: isValidReview
+    });
+  } catch {
+    review = await provider.generateJson<ReviewResult>({
+      model: CONFIG.MODEL_REVIEWER_FALLBACK || CONFIG.MODEL_REVIEWER,
+      prompt: reviewPrompt,
+      label: 'review:fallback',
+      validator: isValidReview
+    });
+  }
   if (String(review.verdict).toUpperCase() !== 'APPROVED') {
     throw new Error(review.reason || 'Reviewer rejeitou a implementação.');
   }
@@ -161,6 +188,7 @@ async function executeTask(input: {
 
 export async function runAgent(): Promise<void> {
   acquireLock();
+  const provider = getModelProvider();
 
   try {
     ensureSafeStart();
@@ -230,7 +258,7 @@ export async function runAgent(): Promise<void> {
 
         if (!memory.backlog.length) {
           const snapshot = buildRepoSnapshot(repoIndex);
-          const backlog = await createBacklog({ blueprint, snapshot, memory, branch, repoIndex, config: CONFIG });
+          const backlog = await createBacklog({ blueprint, snapshot, memory, branch, repoIndex, config: CONFIG, provider });
           memory.backlog = backlog.tasks || [];
           memory.metrics.plannerRuns += 1;
           saveMemory(memory);
@@ -254,7 +282,7 @@ export async function runAgent(): Promise<void> {
           log('📌 goal:', task.goal);
 
           try {
-            const result = await executeTask({ task, blueprint, memory: latestMemory });
+            const result = await executeTask({ task, blueprint, memory: latestMemory, provider });
             const commitMessage = result.review.suggested_commit_message || task.commit_message;
             const committed = commitAll(commitMessage);
 
@@ -293,7 +321,14 @@ export async function runAgent(): Promise<void> {
 
             if (decisionByFailure.action === 'replan') {
               try {
-                const nextTask = await replanTask({ blueprint, task, failureSummary: reason, memory: latestMemory, config: CONFIG });
+                const nextTask = await replanTask({
+                  blueprint,
+                  task,
+                  failureSummary: reason,
+                  memory: latestMemory,
+                  config: CONFIG,
+                  provider
+                });
                 latestMemory.backlog = (latestMemory.backlog || []).map((item) => (item.id === task.id ? nextTask : item));
                 saveMemory(latestMemory);
                 log('🧠 task replanned:', nextTask.title);
@@ -323,6 +358,7 @@ export async function runAgent(): Promise<void> {
         cycleMetric.durationMs = Math.max(0, cycleEndedAt - cycleStartedAt);
 
         const postCycleMemory = loadMemory();
+        registerProviderMetrics(postCycleMemory, provider.getMetrics());
         registerCycleMetric(postCycleMemory, cycleMetric);
         postCycleMemory.runtime.endedAt = cycleMetric.endedAt;
         saveMemory(postCycleMemory);
