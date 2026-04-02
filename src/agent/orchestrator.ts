@@ -24,6 +24,7 @@ import type { AgentTask, ExecutionPreview, HumanApprovalResponse, Implementation
 
 export interface RunAgentOptions {
   requestHumanApproval?: (preview: ExecutionPreview) => Promise<HumanApprovalResponse>;
+  maxCycles?: number;
 }
 
 function lockFile(): string {
@@ -370,6 +371,23 @@ export async function runAgent(options: RunAgentOptions = {}): Promise<void> {
     saveMemory(memoryAtStart);
 
     while (true) {
+      if (typeof options.maxCycles === 'number' && options.maxCycles > 0 && runtime.iteration >= options.maxCycles) {
+        const memory = loadMemory();
+        const nowIso = new Date().toISOString();
+        const stopMetric: RuntimeCycleMetric = {
+          cycle: runtime.iteration + 1,
+          startedAt: nowIso,
+          endedAt: nowIso,
+          durationMs: 0,
+          result: 'stopped',
+          reason: `max_cycles_reached:${options.maxCycles}`
+        };
+        registerCycleMetric(memory, stopMetric);
+        memory.runtime.endedAt = nowIso;
+        saveMemory(memory);
+        break;
+      }
+
       const decision = evaluateRuntimePolicy(runtime);
       if (!decision.shouldContinue) {
         const memory = loadMemory();

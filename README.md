@@ -21,6 +21,18 @@ npm run build
 npm start
 ```
 
+### Interface Browser (novo)
+
+```bash
+agent web
+# abre em http://localhost:3030 (ou WEB_PORT)
+```
+
+No modo web você consegue:
+- enviar objetivo para o backlog,
+- rodar 1 ciclo do agente,
+- visualizar status/métricas em tempo real.
+
 ## Variáveis principais
 
 - `REPO_PATH`

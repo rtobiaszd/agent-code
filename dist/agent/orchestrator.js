@@ -320,6 +320,22 @@ async function runAgent(options = {}) {
         memoryAtStart.runtime.consecutiveCycleFailures = 0;
         (0, memory_1.saveMemory)(memoryAtStart);
         while (true) {
+            if (typeof options.maxCycles === 'number' && options.maxCycles > 0 && runtime.iteration >= options.maxCycles) {
+                const memory = (0, memory_1.loadMemory)();
+                const nowIso = new Date().toISOString();
+                const stopMetric = {
+                    cycle: runtime.iteration + 1,
+                    startedAt: nowIso,
+                    endedAt: nowIso,
+                    durationMs: 0,
+                    result: 'stopped',
+                    reason: `max_cycles_reached:${options.maxCycles}`
+                };
+                (0, runtime_policy_1.registerCycleMetric)(memory, stopMetric);
+                memory.runtime.endedAt = nowIso;
+                (0, memory_1.saveMemory)(memory);
+                break;
+            }
             const decision = (0, runtime_policy_1.evaluateRuntimePolicy)(runtime);
             if (!decision.shouldContinue) {
                 const memory = (0, memory_1.loadMemory)();
