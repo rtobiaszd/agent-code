@@ -1,8 +1,8 @@
 import readline from 'readline';
 import { CONFIG } from './config';
-import { runAgent } from './agent/orchestrator';
+import { explainTaskSelection, runAgent } from './agent/orchestrator';
 import { loadMemory, pushHistory, saveMemory } from './state/memory';
-import type { AgentTask, MemoryState } from './types';
+import type { AgentTask, ExecutionPreview, HumanApprovalResponse, MemoryState } from './types';
 
 type CliCommand = 'run' | 'auto' | 'chat' | 'help';
 
@@ -17,6 +17,7 @@ Uso:
 
 Comandos no chat:
   /plan   mostra backlog atual (resumido)
+  /why    explica por que a próxima task foi priorizada
   /apply  executa uma iteração do agente
   /status mostra métricas rápidas
   /stop   encerra o chat
@@ -81,7 +82,7 @@ async function runGoalMode(goal: string): Promise<void> {
   prependTaskToBacklog(memory, task);
   saveMemory(memory);
   console.log('🧭 Objetivo convertido em tarefa inicial e injetado no backlog.');
-  await runAgent();
+  await runAgent({ requestHumanApproval: CONFIG.ASSISTED_MODE ? requestAssistedApproval : undefined });
 }
 
 function sleep(ms: number): Promise<void> {
@@ -97,10 +98,47 @@ async function runAutoMode(): Promise<void> {
 
   console.log(`♻️ Modo auto iniciado (delay: ${CONFIG.LOOP_DELAY_MS}ms). Pressione Ctrl+C para parar.`);
   while (!shouldStop) {
-    await runAgent();
+    await runAgent({ requestHumanApproval: CONFIG.ASSISTED_MODE ? requestAssistedApproval : undefined });
     if (shouldStop) break;
     await sleep(CONFIG.LOOP_DELAY_MS);
   }
+}
+
+function askWithReadline(rl: readline.Interface, question: string): Promise<string> {
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => resolve(answer.trim()));
+  });
+}
+
+async function requestAssistedApproval(preview: ExecutionPreview, rl?: readline.Interface): Promise<HumanApprovalResponse> {
+  const tempRl =
+    rl ||
+    readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true
+    });
+
+  console.log(`\n🔎 Preview (${preview.stage})`);
+  console.log(`Task: ${preview.task.title}`);
+  console.log(`Resumo: ${preview.task.goal}`);
+  console.log(`Por quê: ${preview.task.why}`);
+  console.log(`Arquivos (${preview.files.length}): ${preview.files.join(', ') || '(nenhum)'}`);
+  console.log('Diff resumido:');
+  for (const line of preview.diffSummary.slice(0, 20)) console.log(`  - ${line}`);
+
+  const answer = (await askWithReadline(tempRl, 'Decisão [approve/reject/edit]: ')).toLowerCase();
+  if (answer === 'approve') {
+    if (!rl) tempRl.close();
+    return { decision: 'approve' };
+  }
+  if (answer === 'edit') {
+    const notes = await askWithReadline(tempRl, 'Descreva a edição desejada: ');
+    if (!rl) tempRl.close();
+    return { decision: 'edit', notes };
+  }
+  if (!rl) tempRl.close();
+  return { decision: 'reject', notes: answer || 'rejeitado sem motivo explícito' };
 }
 
 function renderStatus(memory: MemoryState): void {
@@ -159,8 +197,17 @@ async function runChatMode(): Promise<void> {
       renderPlan(loadMemory());
       continue;
     }
+    if (input === '/why') {
+      const memory = loadMemory();
+      console.log(explainTaskSelection(memory));
+      pushHistory(memory, { type: 'chat_why_requested' });
+      saveMemory(memory);
+      continue;
+    }
     if (input === '/apply') {
-      await runAgent();
+      await runAgent({
+        requestHumanApproval: CONFIG.ASSISTED_MODE ? (preview) => requestAssistedApproval(preview, rl) : undefined
+      });
       continue;
     }
     if (input.startsWith('/')) {
