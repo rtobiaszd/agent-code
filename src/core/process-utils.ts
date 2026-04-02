@@ -1,5 +1,6 @@
 import { spawnSync } from 'child_process';
 import { CONFIG } from '../config';
+import { assertCommandAllowed } from '../security/policy';
 export interface ProcessRunResult {
   ok: boolean;
   code: number | null;
@@ -7,7 +8,9 @@ export interface ProcessRunResult {
   stderr: string;
 }
 
-export function run(command: string, options: { cwd?: string } = {}): ProcessRunResult {
+export function run(command: string, options: { cwd?: string; promptHash?: string } = {}): ProcessRunResult {
+  assertCommandAllowed(command, { cwd: options.cwd || CONFIG.REPO_PATH, promptHash: options.promptHash });
+
   const result = spawnSync(command, {
     cwd: options.cwd || CONFIG.REPO_PATH,
     shell: true,

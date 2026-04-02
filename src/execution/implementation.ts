@@ -2,6 +2,7 @@ import fs from 'fs';
 import { CONFIG } from '../config';
 import { abs, classifyFileEligibility, exists, normalizeSlashes, safeWrite } from '../core/fs-utils';
 import { sanitizeOneLine, unique } from '../core/text';
+import { appendAuditLog, assertImplementationWriteScope, isDryRunMode } from '../security/policy';
 import type { AgentConfig, AgentTask, FileEligibility, ImplementationPlan } from '../types';
 
 function isJsonFilePath(filePath: string): boolean {
@@ -148,27 +149,41 @@ export function sanitizeImplementation(
   return { impl, skipped };
 }
 
-export function applyImplementation(impl: ImplementationPlan): string[] {
+export function applyImplementation(impl: ImplementationPlan, options: { promptHash?: string } = {}): string[] {
+  assertImplementationWriteScope(impl, { promptHash: options.promptHash });
+
   const touched: string[] = [];
+  const dryRun = isDryRunMode();
 
   for (const file of impl.files) {
     const jsonValidation = validateJsonContent(file.path, file.content);
     if (!jsonValidation.ok) {
       throw new Error(`Conteúdo inválido para ${file.path}: ${jsonValidation.reason}`);
     }
-    safeWrite(abs(file.path), file.content);
     touched.push(normalizeSlashes(file.path));
+    if (!dryRun) safeWrite(abs(file.path), file.content);
   }
 
   for (const delPath of impl.delete_files || []) {
     const full = abs(delPath);
     if (exists(full)) {
-      fs.unlinkSync(full);
       touched.push(normalizeSlashes(delPath));
+      if (!dryRun) fs.unlinkSync(full);
     }
   }
 
-  return unique(touched);
+  const uniqueTouched = unique(touched);
+
+  appendAuditLog({
+    type: 'implementation.apply',
+    promptHash: options.promptHash || null,
+    filesTouched: uniqueTouched,
+    commandsExecuted: [],
+    policyVerdict: 'allow',
+    dryRun
+  });
+
+  return uniqueTouched;
 }
 
 export function mergeImplementations(baseImpl: ImplementationPlan, nextImpl: ImplementationPlan): ImplementationPlan {

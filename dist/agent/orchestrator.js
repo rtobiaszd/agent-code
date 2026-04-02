@@ -12,6 +12,7 @@ const git_1 = require("../core/git");
 const logger_1 = require("../core/logger");
 const text_1 = require("../core/text");
 const runtime_policy_1 = require("./runtime-policy");
+const policy_1 = require("../security/policy");
 const implementation_1 = require("../execution/implementation");
 const failure_policy_1 = require("../execution/failure-policy");
 const self_heal_1 = require("../execution/self-heal");
@@ -99,6 +100,7 @@ async function executeTask(input) {
         commands: baselineHealth.commands || {},
         memory
     });
+    const promptHash = (0, policy_1.makePromptHash)(executorPrompt);
     let rawImplementation;
     try {
         rawImplementation = await provider.generateJson({
@@ -120,7 +122,7 @@ async function executeTask(input) {
     if ((0, implementation_1.containsDangerousContent)(implementation)) {
         throw new Error('Implementação recusada por conteúdo perigoso.');
     }
-    (0, implementation_1.applyImplementation)(implementation);
+    (0, implementation_1.applyImplementation)(implementation, { promptHash });
     const quickChecks = (0, verification_1.runVerification)(memory, { mode: 'fast', logger: logger_1.log });
     if (!quickChecks.ok) {
         const healed = await (0, self_heal_1.selfHeal)({ blueprint, task, implementation, memory, baselineHealth, provider });

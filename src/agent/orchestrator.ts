@@ -6,6 +6,7 @@ import { commitAll, ensureBranch, git, hasGitRepo, pushBranch, rollbackHard, wor
 import { debug, log } from '../core/logger';
 import { stableTaskSignature, truncate } from '../core/text';
 import { createRuntimeLoopContext, delayBetweenCycles, evaluateRuntimePolicy, registerCycleMetric } from './runtime-policy';
+import { makePromptHash } from '../security/policy';
 import { applyImplementation, containsDangerousContent, isValidImplementation, sanitizeImplementation } from '../execution/implementation';
 import { registerFailureAndDecide } from '../execution/failure-policy';
 import { selfHeal } from '../execution/self-heal';
@@ -110,6 +111,8 @@ async function executeTask(input: {
     memory
   });
 
+  const promptHash = makePromptHash(executorPrompt);
+
   let rawImplementation: ImplementationPlan;
   try {
     rawImplementation = await provider.generateJson<ImplementationPlan>({
@@ -133,7 +136,7 @@ async function executeTask(input: {
     throw new Error('Implementação recusada por conteúdo perigoso.');
   }
 
-  applyImplementation(implementation);
+  applyImplementation(implementation, { promptHash });
 
   const quickChecks = runVerification(memory, { mode: 'fast', logger: log });
   if (!quickChecks.ok) {

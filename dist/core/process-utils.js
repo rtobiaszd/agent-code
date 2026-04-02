@@ -3,7 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.run = run;
 const child_process_1 = require("child_process");
 const config_1 = require("../config");
+const policy_1 = require("../security/policy");
 function run(command, options = {}) {
+    (0, policy_1.assertCommandAllowed)(command, { cwd: options.cwd || config_1.CONFIG.REPO_PATH, promptHash: options.promptHash });
     const result = (0, child_process_1.spawnSync)(command, {
         cwd: options.cwd || config_1.CONFIG.REPO_PATH,
         shell: true,

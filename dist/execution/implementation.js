@@ -13,6 +13,7 @@ const fs_1 = __importDefault(require("fs"));
 const config_1 = require("../config");
 const fs_utils_1 = require("../core/fs-utils");
 const text_1 = require("../core/text");
+const policy_1 = require("../security/policy");
 function isJsonFilePath(filePath) {
     return (0, fs_utils_1.normalizeSlashes)(filePath).toLowerCase().endsWith('.json');
 }
@@ -133,24 +134,37 @@ function sanitizeImplementation(impl, task, config = config_1.CONFIG) {
     }
     return { impl, skipped };
 }
-function applyImplementation(impl) {
+function applyImplementation(impl, options = {}) {
+    (0, policy_1.assertImplementationWriteScope)(impl, { promptHash: options.promptHash });
     const touched = [];
+    const dryRun = (0, policy_1.isDryRunMode)();
     for (const file of impl.files) {
         const jsonValidation = validateJsonContent(file.path, file.content);
         if (!jsonValidation.ok) {
             throw new Error(`Conteúdo inválido para ${file.path}: ${jsonValidation.reason}`);
         }
-        (0, fs_utils_1.safeWrite)((0, fs_utils_1.abs)(file.path), file.content);
         touched.push((0, fs_utils_1.normalizeSlashes)(file.path));
+        if (!dryRun)
+            (0, fs_utils_1.safeWrite)((0, fs_utils_1.abs)(file.path), file.content);
     }
     for (const delPath of impl.delete_files || []) {
         const full = (0, fs_utils_1.abs)(delPath);
         if ((0, fs_utils_1.exists)(full)) {
-            fs_1.default.unlinkSync(full);
             touched.push((0, fs_utils_1.normalizeSlashes)(delPath));
+            if (!dryRun)
+                fs_1.default.unlinkSync(full);
         }
     }
-    return (0, text_1.unique)(touched);
+    const uniqueTouched = (0, text_1.unique)(touched);
+    (0, policy_1.appendAuditLog)({
+        type: 'implementation.apply',
+        promptHash: options.promptHash || null,
+        filesTouched: uniqueTouched,
+        commandsExecuted: [],
+        policyVerdict: 'allow',
+        dryRun
+    });
+    return uniqueTouched;
 }
 function mergeImplementations(baseImpl, nextImpl) {
     const fileMap = new Map();
