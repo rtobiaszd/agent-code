@@ -1,6 +1,6 @@
-import { runAgent } from './agent/orchestrator';
+import { runCli } from './cli';
 
-runAgent().catch((error: unknown) => {
+runCli(process.argv).catch((error: unknown) => {
   const message = error instanceof Error ? error.stack || error.message : String(error);
   console.error(message);
   process.exit(1);

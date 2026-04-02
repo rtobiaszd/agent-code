@@ -4,9 +4,13 @@
   "private": true,
   "type": "commonjs",
   "main": "dist/index.js",
+  "bin": {
+    "agent": "dist/cli.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "start:cli": "node dist/cli.js",
     "dev": "tsc -w -p tsconfig.json"
   },
   "dependencies": {
