@@ -30,6 +30,7 @@ exports.CONFIG = {
     REMOTE_NAME: process.env.REMOTE_NAME || 'origin',
     AUTO_PUSH: String(process.env.AUTO_PUSH || 'true').toLowerCase() === 'true',
     AUTO_BRANCH: String(process.env.AUTO_BRANCH || 'true').toLowerCase() === 'true',
+    ASSISTED_MODE: String(process.env.ASSISTED_MODE || 'false').toLowerCase() === 'true',
     BRANCH_PREFIX: process.env.BRANCH_PREFIX || 'agent/autonomous/test',
     MAX_ITERATIONS: Number(process.env.MAX_ITERATIONS || 999999999),
     MAX_RUNTIME_MS: Number(process.env.MAX_RUNTIME_MS || 60 * 60 * 1000),

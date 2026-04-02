@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.explainTaskSelection = explainTaskSelection;
 exports.runAgent = runAgent;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
@@ -101,6 +102,37 @@ function pickNextTask(memory) {
     });
     return candidates[0] || null;
 }
+function priorityComponents(task, memory) {
+    const hotFiles = new Set((0, memory_1.getHotFiles)(memory));
+    const categoryScore = {
+        security: 100,
+        bugfix: 95,
+        performance: 90,
+        optimization: 85,
+        product: 80,
+        tests: 75,
+        refactor: 60,
+        dx: 50
+    };
+    const priorityScore = { high: 30, medium: 20, low: 10 };
+    const hotFileCount = (task.files || []).filter((item) => hotFiles.has(item)).length;
+    const score = (categoryScore[String(task.category)] || 0) + (priorityScore[String(task.priority)] || 0);
+    return { score, hotFileCount };
+}
+function explainTaskSelection(memory) {
+    const task = pickNextTask(memory);
+    if (!task)
+        return 'Nenhuma task elegível no momento.';
+    const { score, hotFileCount } = priorityComponents(task, memory);
+    const dependencyCount = Array.isArray(task.depends_on) ? task.depends_on.length : 0;
+    return [
+        `Task priorizada: ${task.title}`,
+        `Motivo principal: categoria=${task.category}, prioridade=${task.priority}, score=${score}.`,
+        `Arquivos quentes impactados: ${hotFileCount} (quanto menor, melhor para reduzir risco).`,
+        `Dependências declaradas: ${dependencyCount}.`,
+        `Contexto da task: ${task.why || 'sem descrição de why.'}`
+    ].join('\n');
+}
 function shouldTriggerPeriodicReplan(iteration, memory) {
     const byCycle = iteration % Math.max(1, config_1.CONFIG.REPLAN_INTERVAL_CYCLES) === 0;
     const byCriticalFailure = Number(memory.runtime.consecutiveCycleFailures || 0) >= config_1.CONFIG.CRITICAL_FAILURE_REPLAN_THRESHOLD;
@@ -122,7 +154,7 @@ function isValidReview(value) {
     return Boolean(value && typeof value === 'object' && typeof value.verdict === 'string');
 }
 async function executeTask(input) {
-    const { task, blueprint, memory, provider } = input;
+    const { task, blueprint, memory, provider, requestHumanApproval } = input;
     const fileContexts = (0, indexer_1.collectFileContents)(task.files || []);
     const baselineHealth = (0, health_1.getRepoHealth)(config_1.CONFIG, logger_1.log);
     const executorPrompt = (0, prompts_1.buildExecutorPrompt)({
@@ -154,6 +186,13 @@ async function executeTask(input) {
     if ((0, implementation_1.containsDangerousContent)(implementation)) {
         throw new Error('Implementação recusada por conteúdo perigoso.');
     }
+    const beforeApplyPreview = buildPreview(task, implementation, 'before_apply');
+    await enforceHumanApproval({
+        memory,
+        preview: beforeApplyPreview,
+        requestHumanApproval,
+        assistedMode: config_1.CONFIG.ASSISTED_MODE
+    });
     (0, implementation_1.applyImplementation)(implementation, { promptHash });
     const quickChecks = (0, verification_1.runVerification)(memory, { mode: 'fast', logger: logger_1.log });
     if (!quickChecks.ok) {
@@ -200,7 +239,70 @@ async function executeTask(input) {
     }
     return { implementation, review, repoDelta };
 }
-async function runAgent() {
+function buildPreview(task, implementation, stage) {
+    const files = [...(implementation.files || []).map((item) => item.path), ...(implementation.delete_files || [])];
+    const diffSummary = stage === 'before_apply' ? summarizeImplementationDiff(implementation) : summarizeWorkingTreeDiff();
+    return {
+        stage,
+        task: {
+            id: task.id,
+            title: task.title,
+            goal: task.goal,
+            why: task.why,
+            priority: task.priority,
+            category: task.category
+        },
+        files,
+        diffSummary
+    };
+}
+function summarizeImplementationDiff(implementation) {
+    const summary = [];
+    for (const file of implementation.files || []) {
+        const full = (0, fs_utils_1.abs)(file.path);
+        const current = (0, fs_utils_1.exists)(full) ? (0, fs_utils_1.safeRead)(full, '') : '';
+        const currentLines = current ? current.split(/\r?\n/).length : 0;
+        const nextLines = String(file.content || '').split(/\r?\n/).length;
+        const delta = nextLines - currentLines;
+        const operation = (0, fs_utils_1.exists)(full) ? 'update' : 'create';
+        summary.push(`${file.path}: ${operation}, linhas ${currentLines} -> ${nextLines} (Δ ${delta >= 0 ? '+' : ''}${delta})`);
+    }
+    for (const delPath of implementation.delete_files || []) {
+        summary.push(`${delPath}: delete`);
+    }
+    return summary.slice(0, 40);
+}
+function summarizeWorkingTreeDiff() {
+    const out = (0, git_1.git)('diff --stat -- .', true);
+    return out ? out.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 40) : ['Sem diff pendente.'];
+}
+async function enforceHumanApproval(input) {
+    const { memory, preview, assistedMode, requestHumanApproval } = input;
+    if (!assistedMode || !requestHumanApproval)
+        return;
+    const response = await requestHumanApproval(preview);
+    const decision = String(response?.decision || 'reject').toLowerCase();
+    const normalized = decision === 'approve' || decision === 'edit' ? decision : 'reject';
+    (0, memory_1.pushHistory)(memory, {
+        type: 'human_decision',
+        stage: preview.stage,
+        decision: normalized,
+        notes: response?.notes || '',
+        taskId: preview.task.id,
+        taskTitle: preview.task.title
+    });
+    if (normalized === 'approve') {
+        memory.metrics.approvals += 1;
+        (0, memory_1.saveMemory)(memory);
+        return;
+    }
+    memory.metrics.rejections += 1;
+    (0, memory_1.saveMemory)(memory);
+    const error = new Error(normalized === 'edit' ? 'Ação pausada para edição humana.' : 'Ação rejeitada por humano.');
+    error.code = normalized === 'edit' ? 'HUMAN_EDIT' : 'HUMAN_REJECTED';
+    throw error;
+}
+async function runAgent(options = {}) {
     acquireLock();
     const provider = (0, models_1.getModelProvider)();
     try {
@@ -281,8 +383,15 @@ async function runAgent() {
                     (0, logger_1.log)('🎯 task:', task.title);
                     (0, logger_1.log)('📌 goal:', task.goal);
                     try {
-                        const result = await executeTask({ task, blueprint, memory: latestMemory, provider });
+                        const result = await executeTask({ task, blueprint, memory: latestMemory, provider, requestHumanApproval: options.requestHumanApproval });
                         const commitMessage = result.review.suggested_commit_message || task.commit_message;
+                        const beforeCommitPreview = buildPreview(task, result.implementation, 'before_commit');
+                        await enforceHumanApproval({
+                            memory: latestMemory,
+                            preview: beforeCommitPreview,
+                            requestHumanApproval: options.requestHumanApproval,
+                            assistedMode: config_1.CONFIG.ASSISTED_MODE
+                        });
                         const committed = (0, git_1.commitAll)(commitMessage);
                         if (committed)
                             latestMemory.metrics.commits += 1;
@@ -315,6 +424,15 @@ async function runAgent() {
                     catch (error) {
                         (0, git_1.rollbackHard)();
                         const reason = error instanceof Error ? error.message : String(error);
+                        const errorCode = error && typeof error === 'object' ? String(error.code || '') : '';
+                        if (errorCode === 'HUMAN_REJECTED' || errorCode === 'HUMAN_EDIT') {
+                            latestMemory.backlog = (latestMemory.backlog || []).map((item) => item.id === task.id ? { ...item, status: 'ready' } : item);
+                            (0, memory_1.saveMemory)(latestMemory);
+                            cycleMetric.result = 'idle';
+                            cycleMetric.reason = errorCode.toLowerCase();
+                            (0, logger_1.log)('⏸️ task pausada por decisão humana:', reason);
+                            continue;
+                        }
                         const decisionByFailure = (0, failure_policy_1.registerFailureAndDecide)(latestMemory, task, reason, null);
                         if (decisionByFailure.action === 'replan') {
                             try {

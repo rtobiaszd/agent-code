@@ -18,6 +18,7 @@ Uso:
 
 Comandos no chat:
   /plan   mostra backlog atual (resumido)
+  /why    explica por que a próxima task foi priorizada
   /apply  executa uma iteração do agente
   /status mostra métricas rápidas
   /stop   encerra o chat
@@ -79,7 +80,7 @@ async function runGoalMode(goal) {
     prependTaskToBacklog(memory, task);
     (0, memory_1.saveMemory)(memory);
     console.log('🧭 Objetivo convertido em tarefa inicial e injetado no backlog.');
-    await (0, orchestrator_1.runAgent)();
+    await (0, orchestrator_1.runAgent)({ requestHumanApproval: config_1.CONFIG.ASSISTED_MODE ? requestAssistedApproval : undefined });
 }
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -92,11 +93,47 @@ async function runAutoMode() {
     });
     console.log(`♻️ Modo auto iniciado (delay: ${config_1.CONFIG.LOOP_DELAY_MS}ms). Pressione Ctrl+C para parar.`);
     while (!shouldStop) {
-        await (0, orchestrator_1.runAgent)();
+        await (0, orchestrator_1.runAgent)({ requestHumanApproval: config_1.CONFIG.ASSISTED_MODE ? requestAssistedApproval : undefined });
         if (shouldStop)
             break;
         await sleep(config_1.CONFIG.LOOP_DELAY_MS);
     }
+}
+function askWithReadline(rl, question) {
+    return new Promise((resolve) => {
+        rl.question(question, (answer) => resolve(answer.trim()));
+    });
+}
+async function requestAssistedApproval(preview, rl) {
+    const tempRl = rl ||
+        readline_1.default.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+            terminal: true
+        });
+    console.log(`\n🔎 Preview (${preview.stage})`);
+    console.log(`Task: ${preview.task.title}`);
+    console.log(`Resumo: ${preview.task.goal}`);
+    console.log(`Por quê: ${preview.task.why}`);
+    console.log(`Arquivos (${preview.files.length}): ${preview.files.join(', ') || '(nenhum)'}`);
+    console.log('Diff resumido:');
+    for (const line of preview.diffSummary.slice(0, 20))
+        console.log(`  - ${line}`);
+    const answer = (await askWithReadline(tempRl, 'Decisão [approve/reject/edit]: ')).toLowerCase();
+    if (answer === 'approve') {
+        if (!rl)
+            tempRl.close();
+        return { decision: 'approve' };
+    }
+    if (answer === 'edit') {
+        const notes = await askWithReadline(tempRl, 'Descreva a edição desejada: ');
+        if (!rl)
+            tempRl.close();
+        return { decision: 'edit', notes };
+    }
+    if (!rl)
+        tempRl.close();
+    return { decision: 'reject', notes: answer || 'rejeitado sem motivo explícito' };
 }
 function renderStatus(memory) {
     const pending = memory.backlog.length;
@@ -148,8 +185,17 @@ async function runChatMode() {
             renderPlan((0, memory_1.loadMemory)());
             continue;
         }
+        if (input === '/why') {
+            const memory = (0, memory_1.loadMemory)();
+            console.log((0, orchestrator_1.explainTaskSelection)(memory));
+            (0, memory_1.pushHistory)(memory, { type: 'chat_why_requested' });
+            (0, memory_1.saveMemory)(memory);
+            continue;
+        }
         if (input === '/apply') {
-            await (0, orchestrator_1.runAgent)();
+            await (0, orchestrator_1.runAgent)({
+                requestHumanApproval: config_1.CONFIG.ASSISTED_MODE ? (preview) => requestAssistedApproval(preview, rl) : undefined
+            });
             continue;
         }
         if (input.startsWith('/')) {

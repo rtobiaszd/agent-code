@@ -5,6 +5,7 @@ export type TaskStatus = 'pending' | 'ready' | 'blocked' | 'in_progress' | 'done
 export type FailureClassification = 'replanable' | 'healable' | 'stabilization' | 'fatal' | 'unknown';
 export type VerificationMode = 'fast' | 'full';
 export type FileAction = 'update' | 'create';
+export type HumanDecision = 'approve' | 'reject' | 'edit';
 
 export interface AgentConfig {
   REPO_PATH: string;
@@ -30,6 +31,7 @@ export interface AgentConfig {
   REMOTE_NAME: string;
   AUTO_PUSH: boolean;
   AUTO_BRANCH: boolean;
+  ASSISTED_MODE: boolean;
   BRANCH_PREFIX: string;
   MAX_ITERATIONS: number;
   MAX_RUNTIME_MS: number;
@@ -181,6 +183,18 @@ export interface ReviewResult {
   reason: string;
   warnings?: string[];
   suggested_commit_message?: string;
+}
+
+export interface ExecutionPreview {
+  stage: 'before_apply' | 'before_commit';
+  task: Pick<AgentTask, 'id' | 'title' | 'goal' | 'why' | 'priority' | 'category'>;
+  files: string[];
+  diffSummary: string[];
+}
+
+export interface HumanApprovalResponse {
+  decision: HumanDecision;
+  notes?: string;
 }
 
 export interface HistoryItem extends Record<string, unknown> {
