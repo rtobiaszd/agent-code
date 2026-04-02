@@ -21,6 +21,7 @@ export interface AgentConfig {
   AUTO_BRANCH: boolean;
   BRANCH_PREFIX: string;
   MAX_ITERATIONS: number;
+  MAX_RUNTIME_MS: number;
   LOOP_DELAY_MS: number;
   MAX_FILES_PER_TASK: number;
   MAX_CONTEXT_FILES: number;
@@ -55,6 +56,25 @@ export interface AgentConfig {
   ALLOWED_EXTENSIONS: string[];
   STABILIZATION_ALLOWED_NEW_FILES: string[];
   FORBIDDEN_TECH_KEYWORDS: string[];
+}
+
+export interface RuntimeCycleMetric {
+  cycle: number;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  result: 'success' | 'failure' | 'idle' | 'stopped';
+  reason?: string;
+  taskId?: string;
+  taskTitle?: string;
+}
+
+export interface RuntimeState {
+  startedAt: string | null;
+  endedAt: string | null;
+  lastLoopResult: string | null;
+  consecutiveCycleFailures: number;
+  cycleMetrics: RuntimeCycleMetric[];
 }
 
 export interface AgentTask {
@@ -207,6 +227,7 @@ export interface MemoryState {
   skipped: Array<Record<string, unknown>>;
   history: HistoryItem[];
   identicalFailureBursts: Record<string, number>;
+  runtime: RuntimeState;
   learned: MemoryLearnedState;
   metrics: MemoryMetrics;
 }
