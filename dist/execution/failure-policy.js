@@ -26,7 +26,11 @@ function classifyFailure(reason) {
         low.includes('blocked_name:') ||
         low.includes('arquivo protegido') ||
         low.includes('non_fatal_invalid_file_selection') ||
-        low.includes('empty_implementation')) {
+        low.includes('empty_implementation') ||
+        low.includes('policy_denied') ||
+        low.includes('policy_denied_command') ||
+        low.includes('policy_denied_pattern') ||
+        low.includes('policy_denied_write_scope')) {
         return 'replanable';
     }
     if (low.includes('lint') ||
