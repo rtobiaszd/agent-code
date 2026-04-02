@@ -60,6 +60,11 @@ function buildInitialTaskFromGoal(goal: string): AgentTask {
     goal: compact,
     why: 'Objetivo inicial informado pelo usuário via CLI.',
     files: [],
+    depends_on: [],
+    acceptance_criteria: ['Implementar o objetivo inicial sem quebrar verificações existentes.'],
+    estimated_size: 'm',
+    risk_level: 'medium',
+    status: 'ready',
     new_files_allowed: true,
     commit_message: `feat: ${title.slice(0, 60)}`
   };

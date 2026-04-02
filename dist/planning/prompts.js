@@ -49,6 +49,12 @@ ${JSON.stringify(memory.learned.nextOpportunityPatterns.slice(0, 20), null, 2)}
 LEARNED DEPENDENCY INSTALLS:
 ${JSON.stringify(memory.learned.dependencyInstallPatterns.slice(0, 20), null, 2)}
 
+GOAL PROGRESS BY OBJECTIVE:
+${JSON.stringify(memory.learned.goalProgressByObjective, null, 2)}
+
+CATEGORY COMPLETION STATS:
+${JSON.stringify(memory.learned.categoryCompletionByCategory, null, 2)}
+
 CRITICAL RULES:
 - Read the blueprint and continuously create useful tasks forever
 - Generate tasks in these categories whenever relevant: product, performance, security, optimization, bugfix, tests, refactor, dx
@@ -64,6 +70,8 @@ CRITICAL RULES:
 - Max ${config.MAX_FILES_PER_TASK} files per task
 - Always include real file paths when possible
 - Consider previously completed tasks and the auto evolution log so the project keeps evolving instead of repeating itself
+- Build the backlog as a dependency graph: include tasks, depends_on edges, and measurable acceptance criteria
+- Use status 'ready' when there are no dependencies; otherwise use 'blocked'
 
 Return ONLY valid JSON in this exact shape:
 {
@@ -77,6 +85,11 @@ Return ONLY valid JSON in this exact shape:
       "goal": "what should be improved",
       "why": "why this matters",
       "files": ["real/path1", "real/path2"],
+      "depends_on": ["task-id-dependency"],
+      "acceptance_criteria": ["criterion 1", "criterion 2"],
+      "estimated_size": "s|m",
+      "risk_level": "low|medium|high|critical",
+      "status": "ready|blocked|pending",
       "new_files_allowed": true,
       "commit_message": "feat/fix/chore/test/refactor/perf: concise message"
     }
@@ -165,6 +178,11 @@ Return ONLY valid JSON:
   "goal": "what should be improved",
   "why": "why this matters",
   "files": ["real/path1", "real/path2"],
+  "depends_on": ["task-id-dependency"],
+  "acceptance_criteria": ["criterion 1", "criterion 2"],
+  "estimated_size": "xs|s|m|l",
+  "risk_level": "low|medium|high|critical",
+  "status": "ready|blocked|pending",
   "new_files_allowed": true,
   "commit_message": "feat/fix/chore/test/refactor/perf: concise message"
 }`;

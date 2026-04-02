@@ -51,10 +51,23 @@ function ensureSafeStart(): void {
   }
 }
 
+function isTaskReady(task: AgentTask, backlogById: Map<string, AgentTask>, successful: Set<string>): boolean {
+  const dependencies = Array.isArray(task.depends_on) ? task.depends_on : [];
+  if (!dependencies.length) return true;
+
+  return dependencies.every((depId) => {
+    const dependency = backlogById.get(depId);
+    if (!dependency) return true;
+    if (String(dependency.status) === 'done') return true;
+    return successful.has(stableTaskSignature(dependency));
+  });
+}
+
 function pickNextTask(memory: MemoryState): AgentTask | null {
   const backlog = Array.isArray(memory.backlog) ? memory.backlog : [];
   if (!backlog.length) return null;
 
+  const backlogById = new Map(backlog.map((task) => [task.id, task]));
   const hotFiles = new Set(getHotFiles(memory));
   const successful = new Set(memory.learned.successfulTaskSignatures || []);
 
@@ -70,8 +83,12 @@ function pickNextTask(memory: MemoryState): AgentTask | null {
   };
   const priorityScore: Record<string, number> = { high: 30, medium: 20, low: 10 };
 
-  const candidates = backlog
-    .filter((task) => !successful.has(stableTaskSignature(task)))
+  const readyQueue = backlog.filter((task) => {
+    if (successful.has(stableTaskSignature(task))) return false;
+    return isTaskReady(task, backlogById, successful);
+  });
+
+  const candidates = (readyQueue.length ? readyQueue : backlog.filter((task) => !successful.has(stableTaskSignature(task))))
     .sort((a, b) => {
       const aHot = (a.files || []).filter((item) => hotFiles.has(item)).length;
       const bHot = (b.files || []).filter((item) => hotFiles.has(item)).length;
@@ -83,6 +100,29 @@ function pickNextTask(memory: MemoryState): AgentTask | null {
 
   return candidates[0] || null;
 }
+
+function shouldTriggerPeriodicReplan(iteration: number, memory: MemoryState): boolean {
+  const byCycle = iteration % Math.max(1, CONFIG.REPLAN_INTERVAL_CYCLES) === 0;
+  const byCriticalFailure = Number(memory.runtime.consecutiveCycleFailures || 0) >= CONFIG.CRITICAL_FAILURE_REPLAN_THRESHOLD;
+  return byCycle || byCriticalFailure;
+}
+
+async function refreshBacklogFromPlanner(input: {
+  blueprint: ReturnType<typeof loadBlueprint>;
+  memory: MemoryState;
+  branch: string;
+  repoIndex: ReturnType<typeof buildRepoIndex>;
+  provider: ModelProvider;
+}): Promise<MemoryState> {
+  const { blueprint, memory, branch, repoIndex, provider } = input;
+  const snapshot = buildRepoSnapshot(repoIndex);
+  const generated = await createBacklog({ blueprint, snapshot, memory, branch, repoIndex, config: CONFIG, provider });
+  memory.backlog = generated.tasks || [];
+  memory.metrics.plannerRuns += 1;
+  saveMemory(memory);
+  return memory;
+}
+
 
 function removeTaskFromBacklog(memory: MemoryState, taskId: string): void {
   memory.backlog = (memory.backlog || []).filter((task) => task.id !== taskId);
@@ -259,12 +299,8 @@ export async function runAgent(): Promise<void> {
           log('🛠️ repo unhealthy, entering stabilization mode');
         }
 
-        if (!memory.backlog.length) {
-          const snapshot = buildRepoSnapshot(repoIndex);
-          const backlog = await createBacklog({ blueprint, snapshot, memory, branch, repoIndex, config: CONFIG, provider });
-          memory.backlog = backlog.tasks || [];
-          memory.metrics.plannerRuns += 1;
-          saveMemory(memory);
+        if (!memory.backlog.length || shouldTriggerPeriodicReplan(runtime.iteration, memory)) {
+          await refreshBacklogFromPlanner({ blueprint, memory, branch, repoIndex, provider });
         }
 
         const latestMemory = loadMemory();
@@ -275,6 +311,9 @@ export async function runAgent(): Promise<void> {
           log('⏸️ no valid task available');
         } else {
           latestMemory.metrics.tasksExecuted += 1;
+          latestMemory.backlog = (latestMemory.backlog || []).map((item) =>
+            item.id === task.id ? { ...item, status: 'in_progress' } : item
+          );
           pushHistory(latestMemory, { type: 'task_selected', task });
           saveMemory(latestMemory);
 
@@ -313,6 +352,9 @@ export async function runAgent(): Promise<void> {
               memory: latestMemory
             });
 
+            latestMemory.backlog = (latestMemory.backlog || []).map((item) =>
+              item.id === task.id ? { ...item, status: 'done' } : item
+            );
             removeTaskFromBacklog(latestMemory, task.id);
             saveMemory(latestMemory);
             cycleMetric.result = 'success';
@@ -332,7 +374,9 @@ export async function runAgent(): Promise<void> {
                   config: CONFIG,
                   provider
                 });
-                latestMemory.backlog = (latestMemory.backlog || []).map((item) => (item.id === task.id ? nextTask : item));
+                latestMemory.backlog = (latestMemory.backlog || []).map((item) =>
+                  item.id === task.id ? { ...nextTask, status: 'ready' } : item
+                );
                 saveMemory(latestMemory);
                 log('🧠 task replanned:', nextTask.title);
               } catch (replanError) {
@@ -341,6 +385,9 @@ export async function runAgent(): Promise<void> {
                 saveMemory(latestMemory);
               }
             } else if (decisionByFailure.action === 'drop') {
+              latestMemory.backlog = (latestMemory.backlog || []).map((item) =>
+                item.id === task.id ? { ...item, status: 'failed' } : item
+              );
               removeTaskFromBacklog(latestMemory, task.id);
               saveMemory(latestMemory);
             }
