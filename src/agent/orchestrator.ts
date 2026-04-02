@@ -5,6 +5,7 @@ import { exists, safeWrite } from '../core/fs-utils';
 import { commitAll, ensureBranch, git, hasGitRepo, pushBranch, rollbackHard, workingTreeDirty } from '../core/git';
 import { debug, log } from '../core/logger';
 import { stableTaskSignature, truncate } from '../core/text';
+import { createRuntimeLoopContext, delayBetweenCycles, evaluateRuntimePolicy, registerCycleMetric } from './runtime-policy';
 import { applyImplementation, containsDangerousContent, isValidImplementation, sanitizeImplementation } from '../execution/implementation';
 import { registerFailureAndDecide } from '../execution/failure-policy';
 import { selfHeal } from '../execution/self-heal';
@@ -17,7 +18,7 @@ import { compareRepoHealth, getRepoHealth } from '../repo/health';
 import { buildRepoIndex, buildRepoSnapshot, collectFileContents, loadBlueprint } from '../repo/indexer';
 import { updateMainEvolutionDoc } from '../state/evolution';
 import { getHotFiles, loadMemory, pushHistory, rememberSuccess, saveMemory } from '../state/memory';
-import type { AgentTask, ImplementationPlan, MemoryState, ReviewResult } from '../types';
+import type { AgentTask, ImplementationPlan, MemoryState, ReviewResult, RuntimeCycleMetric } from '../types';
 
 function lockFile(): string {
   return path.join(CONFIG.REPO_PATH, '.agent-lock');
@@ -164,106 +165,179 @@ export async function runAgent(): Promise<void> {
   try {
     ensureSafeStart();
 
-    const memory = loadMemory();
-    const blueprint = loadBlueprint();
-    const repoIndex = buildRepoIndex();
-
-    memory.repoHash = repoIndex.repoHash;
-    memory.blueprintHash = blueprint.hash;
-    saveMemory(memory);
-
     const branch = ensureBranch(nowDate());
     log('🚀 AGENT STARTED');
     log('📁 repo:', CONFIG.REPO_PATH);
     log('📘 blueprint:', CONFIG.BLUEPRINT_FILE);
     log('🌿 branch:', branch);
+    const runtime = createRuntimeLoopContext();
+    const memoryAtStart = loadMemory();
+    memoryAtStart.runtime.startedAt = new Date(runtime.startedAtMs).toISOString();
+    memoryAtStart.runtime.endedAt = null;
+    memoryAtStart.runtime.lastLoopResult = null;
+    memoryAtStart.runtime.consecutiveCycleFailures = 0;
+    saveMemory(memoryAtStart);
 
-    const repoHealth = getRepoHealth(CONFIG, log);
-    if (!repoHealth.ok && CONFIG.REPO_STABILIZATION_MODE) {
-      const stabilizationTask = createRepoStabilizationTask(repoHealth);
-      memory.backlog = [stabilizationTask, ...(memory.backlog || [])];
-      saveMemory(memory);
-      log('🛠️ repo unhealthy, entering stabilization mode');
-    }
-
-    if (!memory.backlog.length) {
-      const snapshot = buildRepoSnapshot(repoIndex);
-      const backlog = await createBacklog({ blueprint, snapshot, memory, branch, repoIndex, config: CONFIG });
-      memory.backlog = backlog.tasks || [];
-      memory.metrics.plannerRuns += 1;
-      saveMemory(memory);
-    }
-
-    const task = pickNextTask(memory);
-    if (!task) {
-      log('⏸️ no valid task available');
-      return;
-    }
-
-    memory.metrics.iterations += 1;
-    memory.metrics.tasksExecuted += 1;
-    pushHistory(memory, { type: 'task_selected', task });
-    saveMemory(memory);
-
-    log('🎯 task:', task.title);
-    log('📌 goal:', task.goal);
-
-    try {
-      const result = await executeTask({ task, blueprint, memory });
-      const commitMessage = result.review.suggested_commit_message || task.commit_message;
-      const committed = commitAll(commitMessage);
-
-      if (committed) memory.metrics.commits += 1;
-      if (CONFIG.AUTO_PUSH && committed) {
-        pushBranch();
-        memory.metrics.pushes += 1;
+    while (true) {
+      const decision = evaluateRuntimePolicy(runtime);
+      if (!decision.shouldContinue) {
+        const memory = loadMemory();
+        const nowIso = new Date().toISOString();
+        const stopMetric: RuntimeCycleMetric = {
+          cycle: runtime.iteration + 1,
+          startedAt: nowIso,
+          endedAt: nowIso,
+          durationMs: 0,
+          result: 'stopped',
+          reason: decision.reason
+        };
+        registerCycleMetric(memory, stopMetric);
+        memory.runtime.endedAt = nowIso;
+        saveMemory(memory);
+        log('🛑 runtime policy stop:', decision.reason || 'policy_stop');
+        break;
       }
 
-      memory.accepted.unshift({
-        at: new Date().toISOString(),
-        title: task.title,
-        category: task.category,
-        commit_message: commitMessage
-      });
-      memory.accepted = memory.accepted.slice(0, 300);
-      memory.metrics.lastSuccessAt = new Date().toISOString();
-      rememberSuccess(memory, task, commitMessage);
+      const cycleStartedAt = Date.now();
+      const cycleStartIso = new Date(cycleStartedAt).toISOString();
+      runtime.iteration += 1;
 
-      updateMainEvolutionDoc({
-        task,
-        implementation: result.implementation,
-        review: result.review,
-        commitMessage,
-        memory
-      });
+      const memory = loadMemory();
+      const blueprint = loadBlueprint();
+      const repoIndex = buildRepoIndex();
 
-      removeTaskFromBacklog(memory, task.id);
+      memory.repoHash = repoIndex.repoHash;
+      memory.blueprintHash = blueprint.hash;
+      memory.metrics.iterations += 1;
       saveMemory(memory);
-      log('✅ task concluída:', task.title);
-    } catch (error) {
-      rollbackHard();
-      const reason = error instanceof Error ? error.message : String(error);
-      const decision = registerFailureAndDecide(memory, task, reason, null);
 
-      if (decision.action === 'replan') {
-        try {
-          const nextTask = await replanTask({ blueprint, task, failureSummary: reason, memory, config: CONFIG });
-          memory.backlog = (memory.backlog || []).map((item) => (item.id === task.id ? nextTask : item));
+      const cycleMetric: RuntimeCycleMetric = {
+        cycle: runtime.iteration,
+        startedAt: cycleStartIso,
+        endedAt: cycleStartIso,
+        durationMs: 0,
+        result: 'idle'
+      };
+
+      try {
+        const repoHealth = getRepoHealth(CONFIG, log);
+        if (!repoHealth.ok && CONFIG.REPO_STABILIZATION_MODE) {
+          const stabilizationTask = createRepoStabilizationTask(repoHealth);
+          memory.backlog = [stabilizationTask, ...(memory.backlog || [])];
           saveMemory(memory);
-          log('🧠 task replanned:', nextTask.title);
-        } catch (replanError) {
-          debug('replan error:', replanError instanceof Error ? replanError.message : String(replanError));
-          removeTaskFromBacklog(memory, task.id);
+          log('🛠️ repo unhealthy, entering stabilization mode');
+        }
+
+        if (!memory.backlog.length) {
+          const snapshot = buildRepoSnapshot(repoIndex);
+          const backlog = await createBacklog({ blueprint, snapshot, memory, branch, repoIndex, config: CONFIG });
+          memory.backlog = backlog.tasks || [];
+          memory.metrics.plannerRuns += 1;
           saveMemory(memory);
         }
-      } else if (decision.action === 'drop') {
-        removeTaskFromBacklog(memory, task.id);
-        saveMemory(memory);
+
+        const latestMemory = loadMemory();
+        const task = pickNextTask(latestMemory);
+        if (!task) {
+          cycleMetric.result = 'idle';
+          cycleMetric.reason = 'no_valid_task_available';
+          log('⏸️ no valid task available');
+        } else {
+          latestMemory.metrics.tasksExecuted += 1;
+          pushHistory(latestMemory, { type: 'task_selected', task });
+          saveMemory(latestMemory);
+
+          cycleMetric.taskId = task.id;
+          cycleMetric.taskTitle = task.title;
+
+          log('🎯 task:', task.title);
+          log('📌 goal:', task.goal);
+
+          try {
+            const result = await executeTask({ task, blueprint, memory: latestMemory });
+            const commitMessage = result.review.suggested_commit_message || task.commit_message;
+            const committed = commitAll(commitMessage);
+
+            if (committed) latestMemory.metrics.commits += 1;
+            if (CONFIG.AUTO_PUSH && committed) {
+              pushBranch();
+              latestMemory.metrics.pushes += 1;
+            }
+
+            latestMemory.accepted.unshift({
+              at: new Date().toISOString(),
+              title: task.title,
+              category: task.category,
+              commit_message: commitMessage
+            });
+            latestMemory.accepted = latestMemory.accepted.slice(0, 300);
+            latestMemory.metrics.lastSuccessAt = new Date().toISOString();
+            rememberSuccess(latestMemory, task, commitMessage);
+
+            updateMainEvolutionDoc({
+              task,
+              implementation: result.implementation,
+              review: result.review,
+              commitMessage,
+              memory: latestMemory
+            });
+
+            removeTaskFromBacklog(latestMemory, task.id);
+            saveMemory(latestMemory);
+            cycleMetric.result = 'success';
+            log('✅ task concluída:', task.title);
+          } catch (error) {
+            rollbackHard();
+            const reason = error instanceof Error ? error.message : String(error);
+            const decisionByFailure = registerFailureAndDecide(latestMemory, task, reason, null);
+
+            if (decisionByFailure.action === 'replan') {
+              try {
+                const nextTask = await replanTask({ blueprint, task, failureSummary: reason, memory: latestMemory, config: CONFIG });
+                latestMemory.backlog = (latestMemory.backlog || []).map((item) => (item.id === task.id ? nextTask : item));
+                saveMemory(latestMemory);
+                log('🧠 task replanned:', nextTask.title);
+              } catch (replanError) {
+                debug('replan error:', replanError instanceof Error ? replanError.message : String(replanError));
+                removeTaskFromBacklog(latestMemory, task.id);
+                saveMemory(latestMemory);
+              }
+            } else if (decisionByFailure.action === 'drop') {
+              removeTaskFromBacklog(latestMemory, task.id);
+              saveMemory(latestMemory);
+            }
+
+            cycleMetric.result = 'failure';
+            cycleMetric.reason = reason;
+            log('❌ task failed:', reason);
+          }
+        }
+      } catch (cycleError) {
+        rollbackHard();
+        cycleMetric.result = 'failure';
+        cycleMetric.reason = cycleError instanceof Error ? cycleError.message : String(cycleError);
+        log('💥 cycle-level failure:', cycleMetric.reason);
+      } finally {
+        const cycleEndedAt = Date.now();
+        cycleMetric.endedAt = new Date(cycleEndedAt).toISOString();
+        cycleMetric.durationMs = Math.max(0, cycleEndedAt - cycleStartedAt);
+
+        const postCycleMemory = loadMemory();
+        registerCycleMetric(postCycleMemory, cycleMetric);
+        postCycleMemory.runtime.endedAt = cycleMetric.endedAt;
+        saveMemory(postCycleMemory);
+
+        runtime.consecutiveFailures = postCycleMemory.runtime.consecutiveCycleFailures;
       }
 
-      log('❌ task failed:', reason);
+      await delayBetweenCycles();
     }
   } finally {
+    try {
+      rollbackHard();
+    } catch {
+      // noop
+    }
     releaseLock();
   }
 }

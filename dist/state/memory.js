@@ -37,6 +37,13 @@ function createMemory() {
         skipped: [],
         history: [],
         identicalFailureBursts: {},
+        runtime: {
+            startedAt: null,
+            endedAt: null,
+            lastLoopResult: null,
+            consecutiveCycleFailures: 0,
+            cycleMetrics: []
+        },
         learned: {
             successfulTaskSignatures: [],
             failedTaskSignatures: [],
@@ -87,6 +94,11 @@ function sanitizeMemory(raw) {
         skipped: Array.isArray(m.skipped) ? m.skipped : [],
         history: Array.isArray(m.history) ? m.history : [],
         identicalFailureBursts: m.identicalFailureBursts && typeof m.identicalFailureBursts === 'object' ? m.identicalFailureBursts : {},
+        runtime: {
+            ...base.runtime,
+            ...(m.runtime || {}),
+            cycleMetrics: Array.isArray(m.runtime?.cycleMetrics) ? m.runtime.cycleMetrics : []
+        },
         learned: {
             ...base.learned,
             ...(m.learned || {}),
