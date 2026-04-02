@@ -1,0 +1,64 @@
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CONFIG = void 0;
+exports.repoPath = repoPath;
+const path_1 = __importDefault(require("path"));
+exports.CONFIG = {
+    REPO_PATH: process.env.REPO_PATH || process.cwd(),
+    BLUEPRINT_FILE: process.env.BLUEPRINT_FILE || 'BLUEPRINT.md',
+    MAIN_EVOLUTION_DOC: process.env.MAIN_EVOLUTION_DOC || process.env.BLUEPRINT_FILE || 'BLUEPRINT.md',
+    EVOLUTION_SECTION_TITLE: process.env.EVOLUTION_SECTION_TITLE || '## Auto Evolution Log',
+    MAX_EVOLUTION_ENTRIES: Number(process.env.MAX_EVOLUTION_ENTRIES || 200),
+    OLLAMA_URL: process.env.OLLAMA_URL || 'http://localhost:11434/api/generate',
+    MODEL_PLANNER: 'llama3.2:latest',
+    MODEL_EXECUTOR: 'deepseek-coder:latest',
+    MODEL_REVIEWER: 'deepseek-coder:latest',
+    MODEL_FIXER: 'deepseek-coder:latest',
+    MODEL_JSON_REPAIR: 'deepseek-coder:latest',
+    REMOTE_NAME: process.env.REMOTE_NAME || 'origin',
+    AUTO_PUSH: String(process.env.AUTO_PUSH || 'true').toLowerCase() === 'true',
+    AUTO_BRANCH: String(process.env.AUTO_BRANCH || 'true').toLowerCase() === 'true',
+    BRANCH_PREFIX: process.env.BRANCH_PREFIX || 'agent/autonomous/test',
+    MAX_ITERATIONS: Number(process.env.MAX_ITERATIONS || 999999999),
+    MAX_RUNTIME_MS: Number(process.env.MAX_RUNTIME_MS || 60 * 60 * 1000),
+    LOOP_DELAY_MS: Number(process.env.LOOP_DELAY_MS || 5000),
+    MAX_FILES_PER_TASK: Number(process.env.MAX_FILES_PER_TASK || 12),
+    MAX_CONTEXT_FILES: Number(process.env.MAX_CONTEXT_FILES || 40),
+    MAX_FILE_CHARS: Number(process.env.MAX_FILE_CHARS || 20000),
+    MAX_BLUEPRINT_CHARS: Number(process.env.MAX_BLUEPRINT_CHARS || 45000),
+    MAX_BACKLOG_ITEMS: Number(process.env.MAX_BACKLOG_ITEMS || 20),
+    MAX_HISTORY_ITEMS: Number(process.env.MAX_HISTORY_ITEMS || 500),
+    MAX_REPEAT_FAILURES_PER_TASK: Number(process.env.MAX_REPEAT_FAILURES_PER_TASK || 4),
+    MAX_REPLAN_PER_TASK: Number(process.env.MAX_REPLAN_PER_TASK || 2),
+    MAX_HOT_FILES: Number(process.env.MAX_HOT_FILES || 20),
+    HOT_FILE_FAILURE_THRESHOLD: Number(process.env.HOT_FILE_FAILURE_THRESHOLD || 3),
+    EVOLUTION_DOC_CONTEXT_CHARS: Number(process.env.EVOLUTION_DOC_CONTEXT_CHARS || 18000),
+    MAX_SELF_HEAL_ATTEMPTS: Number(process.env.MAX_SELF_HEAL_ATTEMPTS || 6),
+    MAX_PARSE_RETRIES: Number(process.env.MAX_PARSE_RETRIES || 4),
+    MAX_JSON_REPAIR_ATTEMPTS: Number(process.env.MAX_JSON_REPAIR_ATTEMPTS || 2),
+    MAX_IDENTICAL_ERROR_RETRIES: Number(process.env.MAX_IDENTICAL_ERROR_RETRIES || 2),
+    AUTO_INSTALL_MISSING_PACKAGES: String(process.env.AUTO_INSTALL_MISSING_PACKAGES || 'true').toLowerCase() === 'true',
+    ALLOW_DEV_DEP_INSTALLS: String(process.env.ALLOW_DEV_DEP_INSTALLS || 'true').toLowerCase() === 'true',
+    MAX_AUTO_INSTALLS_PER_ITERATION: Number(process.env.MAX_AUTO_INSTALLS_PER_ITERATION || 3),
+    NPM_CLIENT: process.env.NPM_CLIENT || '',
+    REPO_STABILIZATION_MODE: String(process.env.REPO_STABILIZATION_MODE || 'true').toLowerCase() === 'true',
+    ALLOW_NEW_FILES: String(process.env.ALLOW_NEW_FILES || 'true').toLowerCase() === 'true',
+    ALLOW_DELETE_FILES: String(process.env.ALLOW_DELETE_FILES || 'false').toLowerCase() === 'true',
+    STRICT_CLEAN_START: String(process.env.STRICT_CLEAN_START || 'true').toLowerCase() === 'true',
+    IGNORE_UNTRACKED_PROTECTED_FILES_ONLY: String(process.env.IGNORE_UNTRACKED_PROTECTED_FILES_ONLY || 'true').toLowerCase() === 'true',
+    DEBUG: String(process.env.DEBUG || 'false').toLowerCase() === 'true',
+    IGNORE_DIRS: ['.git', 'node_modules', 'dist', 'build', '.next', 'coverage', '.turbo', '.cache', '.idea', '.vscode', 'vendor', 'storage', 'tmp', 'temp'],
+    IGNORE_FILES: ['.agent-lock', '.agent-memory.json', '.agent-snapshot.json', 'tmp.patch', 'agent3.cjs', 'agent4.cjs', 'agent5.cjs', 'agent6.cjs', 'agent7.cjs', 'agent7-stable.cjs'],
+    PROTECTED_FILES: ['.agent-lock', '.agent-memory.json', '.agent-snapshot.json', 'tmp.patch', 'agent3.cjs', 'agent4.cjs', 'agent5.cjs', 'agent6.cjs', 'agent7.cjs', 'agent7-stable.cjs', 'BLUEPRINT.md'],
+    BLOCKED_FILE_NAMES: ['.env', '.env.example', '.env.local', '.env.development', '.env.test', '.env.production', '.npmrc', '.yarnrc', '.pnpmrc'],
+    SPECIAL_ALLOWED_FILES: ['.gitignore', '.eslintrc', '.eslintrc.js', '.eslintrc.cjs', '.prettierrc', '.prettierrc.js', '.prettierrc.cjs', 'eslint.config.js', 'eslint.config.cjs', 'eslint.config.mjs'],
+    ALLOWED_EXTENSIONS: ['.js', '.cjs', '.mjs', '.ts', '.tsx', '.jsx', '.json', '.md', '.yml', '.yaml', '.sql', '.css', '.scss', '.prisma', '.html'],
+    STABILIZATION_ALLOWED_NEW_FILES: ['eslint.config.js', 'eslint.config.cjs', 'eslint.config.mjs', 'jest.config.js', 'jest.config.cjs', 'jest.config.ts', 'tsconfig.json', 'tsconfig.build.json', 'tsconfig.test.json', 'vitest.config.ts', 'src/test/setup.ts', 'test/setup.ts'],
+    FORBIDDEN_TECH_KEYWORDS: ['firebase admin sdk', 'mongo', 'mongodb', 'mongoose', 'fastify', 'koa', 'hapi', 'django', 'flask', 'rails', 'laravel', 'supabase', 'graphql']
+};
+function repoPath(...parts) {
+    return path_1.default.join(exports.CONFIG.REPO_PATH, ...parts);
+}
