@@ -52,12 +52,10 @@ export function getStatusPorcelain(): string[] {
 export function workingTreeDirty(): boolean {
   const lines = getStatusPorcelain();
   if (!lines.length) return false;
-  if (!CONFIG.IGNORE_UNTRACKED_PROTECTED_FILES_ONLY) return true;
 
   for (const line of lines) {
     const candidate = line.slice(3).trim();
-    const isUntracked = line.startsWith('??');
-    if (isUntracked && isProtectedFile(candidate)) continue;
+    if (isProtectedFile(candidate)) continue;
     return true;
   }
 

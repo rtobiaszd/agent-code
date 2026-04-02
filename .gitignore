@@ -1,0 +1,7 @@
+dist/
+.agent-lock
+.agent-memory.json
+.agent-audit.log
+node_modules/
+.env
+*.log
