@@ -37,7 +37,9 @@ export function createMemory(): MemoryState {
       fileFailureStats: {},
       taskReplanStats: {},
       nextOpportunityPatterns: [],
-      dependencyInstallPatterns: []
+      dependencyInstallPatterns: [],
+      goalProgressByObjective: {},
+      categoryCompletionByCategory: {}
     },
     metrics: {
       iterations: 0,
@@ -97,7 +99,15 @@ export function sanitizeMemory(raw: unknown): MemoryState {
       fileFailureStats: m.learned?.fileFailureStats && typeof m.learned.fileFailureStats === 'object' ? m.learned.fileFailureStats : {},
       taskReplanStats: m.learned?.taskReplanStats && typeof m.learned.taskReplanStats === 'object' ? m.learned.taskReplanStats : {},
       nextOpportunityPatterns: Array.isArray(m.learned?.nextOpportunityPatterns) ? m.learned!.nextOpportunityPatterns : [],
-      dependencyInstallPatterns: Array.isArray(m.learned?.dependencyInstallPatterns) ? m.learned!.dependencyInstallPatterns : []
+      dependencyInstallPatterns: Array.isArray(m.learned?.dependencyInstallPatterns) ? m.learned!.dependencyInstallPatterns : [],
+      goalProgressByObjective:
+        m.learned?.goalProgressByObjective && typeof m.learned.goalProgressByObjective === 'object'
+          ? m.learned.goalProgressByObjective
+          : {},
+      categoryCompletionByCategory:
+        m.learned?.categoryCompletionByCategory && typeof m.learned.categoryCompletionByCategory === 'object'
+          ? m.learned.categoryCompletionByCategory
+          : {}
     },
     metrics: {
       ...base.metrics,
@@ -126,6 +136,54 @@ export function pushHistory(memory: MemoryState, item: HistoryItem): void {
   }
 }
 
+
+function updateGoalProgress(memory: MemoryState, task: AgentTask, status: 'done' | 'failed'): void {
+  const objectiveKey = String(task.goal || task.title || '').trim();
+  if (!objectiveKey) return;
+
+  const current = memory.learned.goalProgressByObjective[objectiveKey] || {
+    goal: objectiveKey,
+    success: 0,
+    failure: 0,
+    lastTaskId: null,
+    lastStatus: 'pending',
+    lastUpdatedAt: null
+  };
+
+  memory.learned.goalProgressByObjective[objectiveKey] = {
+    ...current,
+    goal: objectiveKey,
+    success: Number(current.success || 0) + (status === 'done' ? 1 : 0),
+    failure: Number(current.failure || 0) + (status === 'failed' ? 1 : 0),
+    lastTaskId: task.id,
+    lastStatus: status,
+    lastUpdatedAt: new Date().toISOString()
+  };
+}
+
+function updateCategoryCompletion(memory: MemoryState, task: AgentTask, status: 'done' | 'failed'): void {
+  const category = String(task.category || 'unknown');
+  const current = memory.learned.categoryCompletionByCategory[category] || {
+    category,
+    completed: 0,
+    failed: 0,
+    total: 0,
+    completionRate: 0
+  };
+
+  const completed = Number(current.completed || 0) + (status === 'done' ? 1 : 0);
+  const failed = Number(current.failed || 0) + (status === 'failed' ? 1 : 0);
+  const total = Number(current.total || 0) + 1;
+
+  memory.learned.categoryCompletionByCategory[category] = {
+    category,
+    completed,
+    failed,
+    total,
+    completionRate: total > 0 ? Number((completed / total).toFixed(4)) : 0
+  };
+}
+
 export function rememberSuccess(memory: MemoryState, task: AgentTask, commitMessage: string): void {
   const signature = stableTaskSignature(task);
   if (!memory.learned.successfulTaskSignatures.includes(signature)) {
@@ -139,6 +197,8 @@ export function rememberSuccess(memory: MemoryState, task: AgentTask, commitMess
   memory.learned.successfulCommitMessages = memory.learned.successfulCommitMessages.slice(0, 100);
 
   clearTaskFailureBursts(memory, task);
+  updateGoalProgress(memory, task, 'done');
+  updateCategoryCompletion(memory, task, 'done');
 }
 
 export function rememberFailure(memory: MemoryState, task: AgentTask, reason: string): void {
@@ -159,6 +219,9 @@ export function rememberFailure(memory: MemoryState, task: AgentTask, reason: st
     memory.learned.testPatterns.unshift(reason);
     memory.learned.testPatterns = memory.learned.testPatterns.slice(0, 50);
   }
+
+  updateGoalProgress(memory, task, 'failed');
+  updateCategoryCompletion(memory, task, 'failed');
 }
 
 export function rememberInstalledPackages(memory: MemoryState, packages: string[], reason: string): void {

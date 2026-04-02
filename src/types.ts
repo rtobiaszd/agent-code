@@ -1,5 +1,7 @@
 export type TaskCategory = 'security' | 'performance' | 'product' | 'optimization' | 'bugfix' | 'refactor' | 'dx' | 'tests';
 export type TaskPriority = 'high' | 'medium' | 'low';
+export type TaskRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+export type TaskStatus = 'pending' | 'ready' | 'blocked' | 'in_progress' | 'done' | 'failed';
 export type FailureClassification = 'replanable' | 'healable' | 'stabilization' | 'fatal' | 'unknown';
 export type VerificationMode = 'fast' | 'full';
 export type FileAction = 'update' | 'create';
@@ -40,6 +42,8 @@ export interface AgentConfig {
   MAX_HISTORY_ITEMS: number;
   MAX_REPEAT_FAILURES_PER_TASK: number;
   MAX_REPLAN_PER_TASK: number;
+  REPLAN_INTERVAL_CYCLES: number;
+  CRITICAL_FAILURE_REPLAN_THRESHOLD: number;
   MAX_HOT_FILES: number;
   HOT_FILE_FAILURE_THRESHOLD: number;
   EVOLUTION_DOC_CONTEXT_CHARS: number;
@@ -94,6 +98,11 @@ export interface AgentTask {
   goal: string;
   why: string;
   files: string[];
+  depends_on: string[];
+  acceptance_criteria: string[];
+  estimated_size: 'xs' | 's' | 'm' | 'l' | 'xl' | string;
+  risk_level: TaskRiskLevel | string;
+  status: TaskStatus | string;
   new_files_allowed: boolean;
   commit_message: string;
   kind?: 'stabilization' | string;
@@ -189,6 +198,24 @@ export interface FailureEntry {
   classification: FailureClassification;
 }
 
+
+export interface GoalProgress {
+  goal: string;
+  success: number;
+  failure: number;
+  lastTaskId: string | null;
+  lastStatus: TaskStatus | string;
+  lastUpdatedAt: string | null;
+}
+
+export interface CategoryCompletionStat {
+  category: string;
+  completed: number;
+  failed: number;
+  total: number;
+  completionRate: number;
+}
+
 export interface MemoryLearnedState {
   successfulTaskSignatures: string[];
   failedTaskSignatures: string[];
@@ -201,6 +228,8 @@ export interface MemoryLearnedState {
   taskReplanStats: Record<string, number>;
   nextOpportunityPatterns: string[];
   dependencyInstallPatterns: string[];
+  goalProgressByObjective: Record<string, GoalProgress>;
+  categoryCompletionByCategory: Record<string, CategoryCompletionStat>;
 }
 
 export interface MemoryMetrics {

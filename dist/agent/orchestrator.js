@@ -53,10 +53,24 @@ function ensureSafeStart() {
         throw new Error('Há alterações não commitadas. Limpe o repo antes de iniciar o agente.');
     }
 }
+function isTaskReady(task, backlogById, successful) {
+    const dependencies = Array.isArray(task.depends_on) ? task.depends_on : [];
+    if (!dependencies.length)
+        return true;
+    return dependencies.every((depId) => {
+        const dependency = backlogById.get(depId);
+        if (!dependency)
+            return true;
+        if (String(dependency.status) === 'done')
+            return true;
+        return successful.has((0, text_1.stableTaskSignature)(dependency));
+    });
+}
 function pickNextTask(memory) {
     const backlog = Array.isArray(memory.backlog) ? memory.backlog : [];
     if (!backlog.length)
         return null;
+    const backlogById = new Map(backlog.map((task) => [task.id, task]));
     const hotFiles = new Set((0, memory_1.getHotFiles)(memory));
     const successful = new Set(memory.learned.successfulTaskSignatures || []);
     const categoryScore = {
@@ -70,8 +84,12 @@ function pickNextTask(memory) {
         dx: 50
     };
     const priorityScore = { high: 30, medium: 20, low: 10 };
-    const candidates = backlog
-        .filter((task) => !successful.has((0, text_1.stableTaskSignature)(task)))
+    const readyQueue = backlog.filter((task) => {
+        if (successful.has((0, text_1.stableTaskSignature)(task)))
+            return false;
+        return isTaskReady(task, backlogById, successful);
+    });
+    const candidates = (readyQueue.length ? readyQueue : backlog.filter((task) => !successful.has((0, text_1.stableTaskSignature)(task))))
         .sort((a, b) => {
         const aHot = (a.files || []).filter((item) => hotFiles.has(item)).length;
         const bHot = (b.files || []).filter((item) => hotFiles.has(item)).length;
@@ -82,6 +100,20 @@ function pickNextTask(memory) {
         return bScore - aScore;
     });
     return candidates[0] || null;
+}
+function shouldTriggerPeriodicReplan(iteration, memory) {
+    const byCycle = iteration % Math.max(1, config_1.CONFIG.REPLAN_INTERVAL_CYCLES) === 0;
+    const byCriticalFailure = Number(memory.runtime.consecutiveCycleFailures || 0) >= config_1.CONFIG.CRITICAL_FAILURE_REPLAN_THRESHOLD;
+    return byCycle || byCriticalFailure;
+}
+async function refreshBacklogFromPlanner(input) {
+    const { blueprint, memory, branch, repoIndex, provider } = input;
+    const snapshot = (0, indexer_1.buildRepoSnapshot)(repoIndex);
+    const generated = await (0, planner_1.createBacklog)({ blueprint, snapshot, memory, branch, repoIndex, config: config_1.CONFIG, provider });
+    memory.backlog = generated.tasks || [];
+    memory.metrics.plannerRuns += 1;
+    (0, memory_1.saveMemory)(memory);
+    return memory;
 }
 function removeTaskFromBacklog(memory, taskId) {
     memory.backlog = (memory.backlog || []).filter((task) => task.id !== taskId);
@@ -229,12 +261,8 @@ async function runAgent() {
                     (0, memory_1.saveMemory)(memory);
                     (0, logger_1.log)('🛠️ repo unhealthy, entering stabilization mode');
                 }
-                if (!memory.backlog.length) {
-                    const snapshot = (0, indexer_1.buildRepoSnapshot)(repoIndex);
-                    const backlog = await (0, planner_1.createBacklog)({ blueprint, snapshot, memory, branch, repoIndex, config: config_1.CONFIG, provider });
-                    memory.backlog = backlog.tasks || [];
-                    memory.metrics.plannerRuns += 1;
-                    (0, memory_1.saveMemory)(memory);
+                if (!memory.backlog.length || shouldTriggerPeriodicReplan(runtime.iteration, memory)) {
+                    await refreshBacklogFromPlanner({ blueprint, memory, branch, repoIndex, provider });
                 }
                 const latestMemory = (0, memory_1.loadMemory)();
                 const task = pickNextTask(latestMemory);
@@ -245,6 +273,7 @@ async function runAgent() {
                 }
                 else {
                     latestMemory.metrics.tasksExecuted += 1;
+                    latestMemory.backlog = (latestMemory.backlog || []).map((item) => item.id === task.id ? { ...item, status: 'in_progress' } : item);
                     (0, memory_1.pushHistory)(latestMemory, { type: 'task_selected', task });
                     (0, memory_1.saveMemory)(latestMemory);
                     cycleMetric.taskId = task.id;
@@ -277,6 +306,7 @@ async function runAgent() {
                             commitMessage,
                             memory: latestMemory
                         });
+                        latestMemory.backlog = (latestMemory.backlog || []).map((item) => item.id === task.id ? { ...item, status: 'done' } : item);
                         removeTaskFromBacklog(latestMemory, task.id);
                         (0, memory_1.saveMemory)(latestMemory);
                         cycleMetric.result = 'success';
@@ -296,7 +326,7 @@ async function runAgent() {
                                     config: config_1.CONFIG,
                                     provider
                                 });
-                                latestMemory.backlog = (latestMemory.backlog || []).map((item) => (item.id === task.id ? nextTask : item));
+                                latestMemory.backlog = (latestMemory.backlog || []).map((item) => item.id === task.id ? { ...nextTask, status: 'ready' } : item);
                                 (0, memory_1.saveMemory)(latestMemory);
                                 (0, logger_1.log)('🧠 task replanned:', nextTask.title);
                             }
@@ -307,6 +337,7 @@ async function runAgent() {
                             }
                         }
                         else if (decisionByFailure.action === 'drop') {
+                            latestMemory.backlog = (latestMemory.backlog || []).map((item) => item.id === task.id ? { ...item, status: 'failed' } : item);
                             removeTaskFromBacklog(latestMemory, task.id);
                             (0, memory_1.saveMemory)(latestMemory);
                         }

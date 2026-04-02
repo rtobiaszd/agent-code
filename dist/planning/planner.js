@@ -23,6 +23,19 @@ function detectForbiddenKeywordsInTask(task, config = config_1.CONFIG) {
     const serialized = JSON.stringify(task).toLowerCase();
     return config.FORBIDDEN_TECH_KEYWORDS.filter((keyword) => serialized.includes(keyword));
 }
+function sanitizeDependencies(dependsOn, taskId) {
+    const list = Array.isArray(dependsOn) ? dependsOn : [];
+    return (0, text_1.unique)(list
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+        .filter((depId) => depId !== taskId));
+}
+function classifyTaskStatus(task, knownTaskIds) {
+    const dependencies = sanitizeDependencies(task.depends_on, task.id).filter((depId) => knownTaskIds.has(depId));
+    if (!dependencies.length)
+        return 'ready';
+    return 'blocked';
+}
 function validateBacklog(backlog, repoIndex, memory, config = config_1.CONFIG) {
     const realFiles = new Set(repoIndex.rels);
     const cleaned = [];
@@ -41,6 +54,7 @@ function validateBacklog(backlog, repoIndex, memory, config = config_1.CONFIG) {
             .filter((file) => !(0, fs_utils_1.isProtectedFile)(file))
             .filter((file) => !(0, fs_utils_1.isBlockedFileName)(file))
             .filter((file) => realFiles.has(file));
+        const acceptanceCriteria = (0, text_1.unique)((Array.isArray(task.acceptance_criteria) ? task.acceptance_criteria : []).map((item) => String(item || '').trim()).filter(Boolean));
         const normalizedTask = {
             id: String(task.id),
             title: String(task.title),
@@ -49,6 +63,11 @@ function validateBacklog(backlog, repoIndex, memory, config = config_1.CONFIG) {
             goal: String(task.goal),
             why: String(task.why || ''),
             files: validFiles.slice(0, config.MAX_FILES_PER_TASK),
+            depends_on: sanitizeDependencies(task.depends_on, String(task.id)),
+            acceptance_criteria: acceptanceCriteria,
+            estimated_size: String(task.estimated_size || 'm'),
+            risk_level: String(task.risk_level || 'medium'),
+            status: String(task.status || 'pending'),
             new_files_allowed: Boolean(task.new_files_allowed),
             commit_message: String(task.commit_message || `chore: ${task.title}`),
             kind: task.kind
@@ -57,7 +76,15 @@ function validateBacklog(backlog, repoIndex, memory, config = config_1.CONFIG) {
             continue;
         cleaned.push(normalizedTask);
     }
-    backlog.tasks = cleaned;
+    const taskIds = new Set(cleaned.map((task) => task.id));
+    backlog.tasks = cleaned.map((task) => {
+        const validDependsOn = task.depends_on.filter((depId) => taskIds.has(depId));
+        return {
+            ...task,
+            depends_on: validDependsOn,
+            status: classifyTaskStatus({ ...task, depends_on: validDependsOn }, taskIds)
+        };
+    });
     return backlog;
 }
 async function generateJsonWithFallback(provider, input) {
@@ -115,6 +142,13 @@ async function replanTask(input) {
     return {
         ...task,
         ...nextTask,
+        depends_on: sanitizeDependencies(nextTask.depends_on, String(nextTask.id || task.id)),
+        acceptance_criteria: Array.isArray(nextTask.acceptance_criteria)
+            ? (0, text_1.unique)(nextTask.acceptance_criteria.map((item) => String(item || '').trim()).filter(Boolean))
+            : task.acceptance_criteria,
+        estimated_size: String(nextTask.estimated_size || task.estimated_size || 'm'),
+        risk_level: String(nextTask.risk_level || task.risk_level || 'medium'),
+        status: String(nextTask.status || task.status || 'pending'),
         files: Array.isArray(nextTask.files)
             ? nextTask.files.map(fs_utils_1.normalizeSlashes).slice(0, config.MAX_FILES_PER_TASK)
             : task.files,

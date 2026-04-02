@@ -56,7 +56,9 @@ function createMemory() {
             fileFailureStats: {},
             taskReplanStats: {},
             nextOpportunityPatterns: [],
-            dependencyInstallPatterns: []
+            dependencyInstallPatterns: [],
+            goalProgressByObjective: {},
+            categoryCompletionByCategory: {}
         },
         metrics: {
             iterations: 0,
@@ -114,7 +116,13 @@ function sanitizeMemory(raw) {
             fileFailureStats: m.learned?.fileFailureStats && typeof m.learned.fileFailureStats === 'object' ? m.learned.fileFailureStats : {},
             taskReplanStats: m.learned?.taskReplanStats && typeof m.learned.taskReplanStats === 'object' ? m.learned.taskReplanStats : {},
             nextOpportunityPatterns: Array.isArray(m.learned?.nextOpportunityPatterns) ? m.learned.nextOpportunityPatterns : [],
-            dependencyInstallPatterns: Array.isArray(m.learned?.dependencyInstallPatterns) ? m.learned.dependencyInstallPatterns : []
+            dependencyInstallPatterns: Array.isArray(m.learned?.dependencyInstallPatterns) ? m.learned.dependencyInstallPatterns : [],
+            goalProgressByObjective: m.learned?.goalProgressByObjective && typeof m.learned.goalProgressByObjective === 'object'
+                ? m.learned.goalProgressByObjective
+                : {},
+            categoryCompletionByCategory: m.learned?.categoryCompletionByCategory && typeof m.learned.categoryCompletionByCategory === 'object'
+                ? m.learned.categoryCompletionByCategory
+                : {}
         },
         metrics: {
             ...base.metrics,
@@ -141,6 +149,48 @@ function pushHistory(memory, item) {
         memory.history = memory.history.slice(0, config_1.CONFIG.MAX_HISTORY_ITEMS);
     }
 }
+function updateGoalProgress(memory, task, status) {
+    const objectiveKey = String(task.goal || task.title || '').trim();
+    if (!objectiveKey)
+        return;
+    const current = memory.learned.goalProgressByObjective[objectiveKey] || {
+        goal: objectiveKey,
+        success: 0,
+        failure: 0,
+        lastTaskId: null,
+        lastStatus: 'pending',
+        lastUpdatedAt: null
+    };
+    memory.learned.goalProgressByObjective[objectiveKey] = {
+        ...current,
+        goal: objectiveKey,
+        success: Number(current.success || 0) + (status === 'done' ? 1 : 0),
+        failure: Number(current.failure || 0) + (status === 'failed' ? 1 : 0),
+        lastTaskId: task.id,
+        lastStatus: status,
+        lastUpdatedAt: new Date().toISOString()
+    };
+}
+function updateCategoryCompletion(memory, task, status) {
+    const category = String(task.category || 'unknown');
+    const current = memory.learned.categoryCompletionByCategory[category] || {
+        category,
+        completed: 0,
+        failed: 0,
+        total: 0,
+        completionRate: 0
+    };
+    const completed = Number(current.completed || 0) + (status === 'done' ? 1 : 0);
+    const failed = Number(current.failed || 0) + (status === 'failed' ? 1 : 0);
+    const total = Number(current.total || 0) + 1;
+    memory.learned.categoryCompletionByCategory[category] = {
+        category,
+        completed,
+        failed,
+        total,
+        completionRate: total > 0 ? Number((completed / total).toFixed(4)) : 0
+    };
+}
 function rememberSuccess(memory, task, commitMessage) {
     const signature = (0, text_1.stableTaskSignature)(task);
     if (!memory.learned.successfulTaskSignatures.includes(signature)) {
@@ -152,6 +202,8 @@ function rememberSuccess(memory, task, commitMessage) {
     }
     memory.learned.successfulCommitMessages = memory.learned.successfulCommitMessages.slice(0, 100);
     clearTaskFailureBursts(memory, task);
+    updateGoalProgress(memory, task, 'done');
+    updateCategoryCompletion(memory, task, 'done');
 }
 function rememberFailure(memory, task, reason) {
     const signature = (0, text_1.stableTaskSignature)(task);
@@ -172,6 +224,8 @@ function rememberFailure(memory, task, reason) {
         memory.learned.testPatterns.unshift(reason);
         memory.learned.testPatterns = memory.learned.testPatterns.slice(0, 50);
     }
+    updateGoalProgress(memory, task, 'failed');
+    updateCategoryCompletion(memory, task, 'failed');
 }
 function rememberInstalledPackages(memory, packages, reason) {
     const items = (0, text_1.unique)(packages.map((pkg) => `${pkg} :: ${(0, text_1.sanitizeOneLine)(reason || '', 180)}`));
