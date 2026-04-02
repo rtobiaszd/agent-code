@@ -55,6 +55,12 @@ ${JSON.stringify(memory.learned.goalProgressByObjective, null, 2)}
 CATEGORY COMPLETION STATS:
 ${JSON.stringify(memory.learned.categoryCompletionByCategory, null, 2)}
 
+AVAILABLE MULTI-AGENT ROLES:
+${JSON.stringify(config.AGENT_ROLES, null, 2)}
+
+AVAILABLE SKILLS TAXONOMY:
+${JSON.stringify(config.AGENT_SKILLS, null, 2)}
+
 CRITICAL RULES:
 - Read the blueprint and continuously create useful tasks forever
 - Generate tasks in these categories whenever relevant: product, performance, security, optimization, bugfix, tests, refactor, dx
@@ -72,6 +78,9 @@ CRITICAL RULES:
 - Consider previously completed tasks and the auto evolution log so the project keeps evolving instead of repeating itself
 - Build the backlog as a dependency graph: include tasks, depends_on edges, and measurable acceptance criteria
 - Use status 'ready' when there are no dependencies; otherwise use 'blocked'
+- Every task must include:
+  - owner_agent: pick one role from AVAILABLE MULTI-AGENT ROLES
+  - skill_tags: choose 1 to 4 items from AVAILABLE SKILLS TAXONOMY
 
 Return ONLY valid JSON in this exact shape:
 {
@@ -91,13 +100,17 @@ Return ONLY valid JSON in this exact shape:
       "risk_level": "low|medium|high|critical",
       "status": "ready|blocked|pending",
       "new_files_allowed": true,
-      "commit_message": "feat/fix/chore/test/refactor/perf: concise message"
+      "commit_message": "feat/fix/chore/test/refactor/perf: concise message",
+      "owner_agent": "role-from-available-list",
+      "skill_tags": ["skill-a", "skill-b"]
     }
   ]
 }`;
 }
 function buildExecutorPrompt(input) {
     const { blueprint, task, fileContexts, commands, memory } = input;
+    const ownerAgent = String(task.owner_agent || 'builder');
+    const skills = Array.isArray(task.skill_tags) && task.skill_tags.length ? task.skill_tags : ['coding'];
     return `You are implementing one task in a production codebase.
 
 SOURCE OF TRUTH:
@@ -105,6 +118,12 @@ ${blueprint.content}
 
 TASK:
 ${JSON.stringify(task, null, 2)}
+
+ACTIVE OWNER AGENT:
+${ownerAgent}
+
+ACTIVE SKILLS:
+${JSON.stringify(skills, null, 2)}
 
 PROJECT COMMANDS:
 ${JSON.stringify(commands, null, 2)}
@@ -184,7 +203,9 @@ Return ONLY valid JSON:
   "risk_level": "low|medium|high|critical",
   "status": "ready|blocked|pending",
   "new_files_allowed": true,
-  "commit_message": "feat/fix/chore/test/refactor/perf: concise message"
+  "commit_message": "feat/fix/chore/test/refactor/perf: concise message",
+  "owner_agent": "role-from-available-list",
+  "skill_tags": ["skill-a", "skill-b"]
 }`;
 }
 function buildReviewerPrompt(input) {

@@ -1,10 +1,11 @@
 import readline from 'readline';
 import { CONFIG } from './config';
 import { explainTaskSelection, runAgent } from './agent/orchestrator';
+import { startWebServer } from './web/server';
 import { loadMemory, pushHistory, saveMemory } from './state/memory';
 import type { AgentTask, ExecutionPreview, HumanApprovalResponse, MemoryState } from './types';
 
-type CliCommand = 'run' | 'auto' | 'chat' | 'help';
+type CliCommand = 'run' | 'auto' | 'chat' | 'web' | 'help';
 
 const CHAT_HISTORY_LIMIT = 8;
 
@@ -14,6 +15,7 @@ Uso:
   agent run --goal "seu objetivo"
   agent auto
   agent chat
+  agent web
 
 Comandos no chat:
   /plan   mostra backlog atual (resumido)
@@ -33,8 +35,8 @@ function failWith(message: string): never {
 function getSubcommand(argv: string[]): CliCommand {
   const raw = argv[2];
   if (!raw || raw === '--help' || raw === '-h') return 'help';
-  if (raw === 'run' || raw === 'auto' || raw === 'chat') return raw;
-  failWith(`Subcomando inválido: "${raw}". Use "run", "auto" ou "chat".`);
+  if (raw === 'run' || raw === 'auto' || raw === 'chat' || raw === 'web') return raw;
+  failWith(`Subcomando inválido: "${raw}". Use "run", "auto", "chat" ou "web".`);
   return 'help';
 }
 
@@ -242,6 +244,11 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
 
   if (command === 'auto') {
     await runAutoMode();
+    return;
+  }
+
+  if (command === 'web') {
+    startWebServer();
     return;
   }
 

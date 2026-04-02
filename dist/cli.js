@@ -7,6 +7,7 @@ exports.runCli = runCli;
 const readline_1 = __importDefault(require("readline"));
 const config_1 = require("./config");
 const orchestrator_1 = require("./agent/orchestrator");
+const server_1 = require("./web/server");
 const memory_1 = require("./state/memory");
 const CHAT_HISTORY_LIMIT = 8;
 function printUsage() {
@@ -15,6 +16,7 @@ Uso:
   agent run --goal "seu objetivo"
   agent auto
   agent chat
+  agent web
 
 Comandos no chat:
   /plan   mostra backlog atual (resumido)
@@ -33,9 +35,9 @@ function getSubcommand(argv) {
     const raw = argv[2];
     if (!raw || raw === '--help' || raw === '-h')
         return 'help';
-    if (raw === 'run' || raw === 'auto' || raw === 'chat')
+    if (raw === 'run' || raw === 'auto' || raw === 'chat' || raw === 'web')
         return raw;
-    failWith(`Subcomando inválido: "${raw}". Use "run", "auto" ou "chat".`);
+    failWith(`Subcomando inválido: "${raw}". Use "run", "auto", "chat" ou "web".`);
     return 'help';
 }
 function extractGoal(argv) {
@@ -224,6 +226,10 @@ async function runCli(argv = process.argv) {
     }
     if (command === 'auto') {
         await runAutoMode();
+        return;
+    }
+    if (command === 'web') {
+        (0, server_1.startWebServer)();
         return;
     }
     await runChatMode();

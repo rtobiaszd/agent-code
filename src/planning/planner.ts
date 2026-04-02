@@ -7,6 +7,24 @@ import { getHotFiles } from '../state/memory';
 import { buildBacklogPlannerPrompt, buildReplanPrompt } from './prompts';
 import type { AgentConfig, AgentTask, BacklogResponse, Blueprint, MemoryState, RepoIndex, RepoSnapshot } from '../types';
 
+const DEFAULT_OWNER_AGENT = 'builder';
+
+function sanitizeOwnerAgent(owner: unknown, config: AgentConfig): string {
+  const normalized = String(owner || '').toLowerCase().trim();
+  return config.AGENT_ROLES.includes(normalized) ? normalized : DEFAULT_OWNER_AGENT;
+}
+
+function sanitizeSkillTags(skills: unknown, config: AgentConfig): string[] {
+  const list = Array.isArray(skills) ? skills : [];
+  const allowed = new Set(config.AGENT_SKILLS.map((item) => item.toLowerCase()));
+  return unique(
+    list
+      .map((item) => String(item || '').toLowerCase().trim())
+      .filter(Boolean)
+      .filter((item) => allowed.has(item))
+  ).slice(0, 6);
+}
+
 export function isValidBacklog(value: unknown): value is BacklogResponse {
   return Boolean(value && typeof value === 'object' && Array.isArray((value as BacklogResponse).tasks));
 }
@@ -80,7 +98,9 @@ export function validateBacklog(
       status: String(task.status || 'pending'),
       new_files_allowed: Boolean(task.new_files_allowed),
       commit_message: String(task.commit_message || `chore: ${task.title}`),
-      kind: task.kind
+      kind: task.kind,
+      owner_agent: sanitizeOwnerAgent(task.owner_agent, config),
+      skill_tags: sanitizeSkillTags(task.skill_tags, config)
     };
 
     if (!normalizedTask.files.length && !normalizedTask.new_files_allowed) continue;
@@ -196,6 +216,8 @@ export async function replanTask(input: {
       ? nextTask.files.map(normalizeSlashes).slice(0, config.MAX_FILES_PER_TASK)
       : task.files,
     new_files_allowed: Boolean(nextTask.new_files_allowed),
-    commit_message: String(nextTask.commit_message || task.commit_message || `chore: ${nextTask.title || task.title}`)
+    commit_message: String(nextTask.commit_message || task.commit_message || `chore: ${nextTask.title || task.title}`),
+    owner_agent: sanitizeOwnerAgent(nextTask.owner_agent || task.owner_agent, config),
+    skill_tags: sanitizeSkillTags(nextTask.skill_tags || task.skill_tags, config)
   };
 }

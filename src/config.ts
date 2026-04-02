@@ -1,6 +1,14 @@
 import path from 'path';
 import type { AgentConfig } from './types';
 
+function parseCsv(value: string, fallback: string[]): string[] {
+  const items = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length ? items : fallback;
+}
+
 export const CONFIG: AgentConfig = {
   REPO_PATH: process.env.REPO_PATH || process.cwd(),
   BLUEPRINT_FILE: process.env.BLUEPRINT_FILE || 'BLUEPRINT.md',
@@ -27,6 +35,13 @@ export const CONFIG: AgentConfig = {
   AUTO_BRANCH: String(process.env.AUTO_BRANCH || 'true').toLowerCase() === 'true',
   ASSISTED_MODE: String(process.env.ASSISTED_MODE || 'false').toLowerCase() === 'true',
   BRANCH_PREFIX: process.env.BRANCH_PREFIX || 'agent/autonomous/test',
+  BLUEPRINT_BRANCH_PREFIX: process.env.BLUEPRINT_BRANCH_PREFIX || 'agent/blueprint',
+  WEB_PORT: Number(process.env.WEB_PORT || 3030),
+  AGENT_ROLES: parseCsv(process.env.AGENT_ROLES || '', ['architect', 'builder', 'reviewer', 'qa', 'security']),
+  AGENT_SKILLS: parseCsv(
+    process.env.AGENT_SKILLS || '',
+    ['planning', 'coding', 'review', 'testing', 'security', 'refactor', 'performance', 'documentation']
+  ),
   MAX_ITERATIONS: Number(process.env.MAX_ITERATIONS || 999999999),
   MAX_RUNTIME_MS: Number(process.env.MAX_RUNTIME_MS || 60 * 60 * 1000),
   LOOP_DELAY_MS: Number(process.env.LOOP_DELAY_MS || 5000),
