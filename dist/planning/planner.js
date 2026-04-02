@@ -9,7 +9,7 @@ exports.replanTask = replanTask;
 const config_1 = require("../config");
 const fs_utils_1 = require("../core/fs-utils");
 const text_1 = require("../core/text");
-const ollama_1 = require("../models/ollama");
+const models_1 = require("../models");
 const memory_1 = require("../state/memory");
 const prompts_1 = require("./prompts");
 function isValidBacklog(value) {
@@ -60,8 +60,26 @@ function validateBacklog(backlog, repoIndex, memory, config = config_1.CONFIG) {
     backlog.tasks = cleaned;
     return backlog;
 }
+async function generateJsonWithFallback(provider, input) {
+    try {
+        return await provider.generateJson({
+            model: input.primaryModel,
+            prompt: input.prompt,
+            label: input.label,
+            validator: input.validator
+        });
+    }
+    catch {
+        return await provider.generateJson({
+            model: input.fallbackModel || input.primaryModel,
+            prompt: input.prompt,
+            label: `${input.label}:fallback`,
+            validator: input.validator
+        });
+    }
+}
 async function createBacklog(input) {
-    const { blueprint, snapshot, memory, branch, repoIndex, config = config_1.CONFIG } = input;
+    const { blueprint, snapshot, memory, branch, repoIndex, config = config_1.CONFIG, provider = (0, models_1.getModelProvider)() } = input;
     const prompt = (0, prompts_1.buildBacklogPlannerPrompt)({
         blueprint,
         snapshot,
@@ -70,18 +88,30 @@ async function createBacklog(input) {
         config,
         hotFiles: (0, memory_1.getHotFiles)(memory)
     });
-    const backlog = await (0, ollama_1.askAndParseJson)(config.MODEL_PLANNER, prompt, 'backlog', isValidBacklog);
+    const backlog = await generateJsonWithFallback(provider, {
+        primaryModel: config.MODEL_PLANNER,
+        fallbackModel: config.MODEL_PLANNER_FALLBACK,
+        prompt,
+        label: 'backlog',
+        validator: isValidBacklog
+    });
     return validateBacklog(backlog, repoIndex, memory, config);
 }
 async function replanTask(input) {
-    const { blueprint, task, failureSummary, memory, config = config_1.CONFIG } = input;
+    const { blueprint, task, failureSummary, memory, config = config_1.CONFIG, provider = (0, models_1.getModelProvider)() } = input;
     const prompt = (0, prompts_1.buildReplanPrompt)({
         blueprint,
         task,
         failureSummary,
         replanCount: Number(memory.learned.taskReplanStats?.[task.id] || 0)
     });
-    const nextTask = await (0, ollama_1.askAndParseJson)(config.MODEL_PLANNER, prompt, 'task-replan', validateTaskShape);
+    const nextTask = await generateJsonWithFallback(provider, {
+        primaryModel: config.MODEL_PLANNER,
+        fallbackModel: config.MODEL_PLANNER_FALLBACK,
+        prompt,
+        label: 'task-replan',
+        validator: validateTaskShape
+    });
     return {
         ...task,
         ...nextTask,

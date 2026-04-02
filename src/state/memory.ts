@@ -3,6 +3,7 @@ import { CONFIG } from '../config';
 import { exists, isProtectedFile, normalizeSlashes, safeRead, safeWrite } from '../core/fs-utils';
 import { sanitizeOneLine, stableTaskSignature, stableTextSignature, unique } from '../core/text';
 import type { AgentTask, FailureEntry, HistoryItem, MemoryState } from '../types';
+import type { ProviderMetricsSnapshot } from '../models/provider';
 
 export function memoryFile(): string {
   return path.join(CONFIG.REPO_PATH, '.agent-memory.json');
@@ -58,6 +59,7 @@ export function createMemory(): MemoryState {
       installs: 0,
       installSuccess: 0,
       installFail: 0,
+      providerMetrics: {},
       lastSuccessAt: null,
       lastErrorAt: null
     }
@@ -230,4 +232,24 @@ export function clearTaskFailureBursts(memory: MemoryState, task: AgentTask): vo
       delete memory.identicalFailureBursts[key];
     }
   }
+}
+
+export function registerProviderMetrics(memory: MemoryState, snapshot: ProviderMetricsSnapshot): void {
+  if (!snapshot || !snapshot.provider) return;
+  memory.metrics.providerMetrics[snapshot.provider] = {
+    totalRequests: snapshot.totalRequests,
+    totalErrors: snapshot.totalErrors,
+    errorRate: snapshot.errorRate,
+    models: Object.fromEntries(
+      Object.entries(snapshot.byModel || {}).map(([model, metric]) => [
+        model,
+        {
+          requests: Number(metric.requests || 0),
+          errors: Number(metric.errors || 0),
+          averageLatencyMs: Number(metric.averageLatencyMs || 0),
+          averageResponseSize: Number(metric.averageResponseSize || 0)
+        }
+      ])
+    )
+  };
 }

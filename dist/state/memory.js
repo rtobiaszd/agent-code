@@ -20,6 +20,7 @@ exports.getHotFiles = getHotFiles;
 exports.countTaskFailures = countTaskFailures;
 exports.registerIdenticalFailure = registerIdenticalFailure;
 exports.clearTaskFailureBursts = clearTaskFailureBursts;
+exports.registerProviderMetrics = registerProviderMetrics;
 const path_1 = __importDefault(require("path"));
 const config_1 = require("../config");
 const fs_utils_1 = require("../core/fs-utils");
@@ -77,6 +78,7 @@ function createMemory() {
             installs: 0,
             installSuccess: 0,
             installFail: 0,
+            providerMetrics: {},
             lastSuccessAt: null,
             lastErrorAt: null
         }
@@ -231,4 +233,22 @@ function clearTaskFailureBursts(memory, task) {
             delete memory.identicalFailureBursts[key];
         }
     }
+}
+function registerProviderMetrics(memory, snapshot) {
+    if (!snapshot || !snapshot.provider)
+        return;
+    memory.metrics.providerMetrics[snapshot.provider] = {
+        totalRequests: snapshot.totalRequests,
+        totalErrors: snapshot.totalErrors,
+        errorRate: snapshot.errorRate,
+        models: Object.fromEntries(Object.entries(snapshot.byModel || {}).map(([model, metric]) => [
+            model,
+            {
+                requests: Number(metric.requests || 0),
+                errors: Number(metric.errors || 0),
+                averageLatencyMs: Number(metric.averageLatencyMs || 0),
+                averageResponseSize: Number(metric.averageResponseSize || 0)
+            }
+        ]))
+    };
 }

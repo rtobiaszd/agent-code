@@ -11,11 +11,20 @@ export interface AgentConfig {
   EVOLUTION_SECTION_TITLE: string;
   MAX_EVOLUTION_ENTRIES: number;
   OLLAMA_URL: string;
+  MODEL_PROVIDER: string;
   MODEL_PLANNER: string;
+  MODEL_PLANNER_FALLBACK: string;
   MODEL_EXECUTOR: string;
+  MODEL_EXECUTOR_FALLBACK: string;
   MODEL_REVIEWER: string;
+  MODEL_REVIEWER_FALLBACK: string;
   MODEL_FIXER: string;
+  MODEL_FIXER_FALLBACK: string;
   MODEL_JSON_REPAIR: string;
+  MODEL_TIMEOUT_MS: number;
+  MODEL_RETRY_ATTEMPTS: number;
+  MODEL_RETRY_BACKOFF_MS: number;
+  MODEL_RETRY_MAX_BACKOFF_MS: number;
   REMOTE_NAME: string;
   AUTO_PUSH: boolean;
   AUTO_BRANCH: boolean;
@@ -214,6 +223,23 @@ export interface MemoryMetrics {
   installs: number;
   installSuccess: number;
   installFail: number;
+  providerMetrics: Record<
+    string,
+    {
+      totalRequests: number;
+      totalErrors: number;
+      errorRate: number;
+      models: Record<
+        string,
+        {
+          requests: number;
+          errors: number;
+          averageLatencyMs: number;
+          averageResponseSize: number;
+        }
+      >;
+    }
+  >;
   lastSuccessAt: string | null;
   lastErrorAt: string | null;
 }

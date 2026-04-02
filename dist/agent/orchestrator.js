@@ -17,7 +17,7 @@ const failure_policy_1 = require("../execution/failure-policy");
 const self_heal_1 = require("../execution/self-heal");
 const stabilization_1 = require("../execution/stabilization");
 const verification_1 = require("../execution/verification");
-const ollama_1 = require("../models/ollama");
+const models_1 = require("../models");
 const planner_1 = require("../planning/planner");
 const prompts_1 = require("../planning/prompts");
 const health_1 = require("../repo/health");
@@ -89,7 +89,7 @@ function isValidReview(value) {
     return Boolean(value && typeof value === 'object' && typeof value.verdict === 'string');
 }
 async function executeTask(input) {
-    const { task, blueprint, memory } = input;
+    const { task, blueprint, memory, provider } = input;
     const fileContexts = (0, indexer_1.collectFileContents)(task.files || []);
     const baselineHealth = (0, health_1.getRepoHealth)(config_1.CONFIG, logger_1.log);
     const executorPrompt = (0, prompts_1.buildExecutorPrompt)({
@@ -99,7 +99,23 @@ async function executeTask(input) {
         commands: baselineHealth.commands || {},
         memory
     });
-    const rawImplementation = await (0, ollama_1.askAndParseJson)(config_1.CONFIG.MODEL_EXECUTOR, executorPrompt, 'executor', implementation_1.isValidImplementation);
+    let rawImplementation;
+    try {
+        rawImplementation = await provider.generateJson({
+            model: config_1.CONFIG.MODEL_EXECUTOR,
+            prompt: executorPrompt,
+            label: 'executor',
+            validator: implementation_1.isValidImplementation
+        });
+    }
+    catch {
+        rawImplementation = await provider.generateJson({
+            model: config_1.CONFIG.MODEL_EXECUTOR_FALLBACK || config_1.CONFIG.MODEL_EXECUTOR,
+            prompt: executorPrompt,
+            label: 'executor:fallback',
+            validator: implementation_1.isValidImplementation
+        });
+    }
     const implementation = (0, implementation_1.sanitizeImplementation)(rawImplementation, task).impl;
     if ((0, implementation_1.containsDangerousContent)(implementation)) {
         throw new Error('Implementação recusada por conteúdo perigoso.');
@@ -107,7 +123,7 @@ async function executeTask(input) {
     (0, implementation_1.applyImplementation)(implementation);
     const quickChecks = (0, verification_1.runVerification)(memory, { mode: 'fast', logger: logger_1.log });
     if (!quickChecks.ok) {
-        const healed = await (0, self_heal_1.selfHeal)({ blueprint, task, implementation, memory, baselineHealth });
+        const healed = await (0, self_heal_1.selfHeal)({ blueprint, task, implementation, memory, baselineHealth, provider });
         if (!healed.ok) {
             throw new Error(healed.lastFailedSummary || quickChecks.summary || 'Self-heal falhou.');
         }
@@ -128,7 +144,23 @@ async function executeTask(input) {
         implementation,
         diff: (0, text_1.truncate)((0, git_1.git)('diff -- .', true), 45000)
     });
-    const review = await (0, ollama_1.askAndParseJson)(config_1.CONFIG.MODEL_REVIEWER, reviewPrompt, 'review', isValidReview);
+    let review;
+    try {
+        review = await provider.generateJson({
+            model: config_1.CONFIG.MODEL_REVIEWER,
+            prompt: reviewPrompt,
+            label: 'review',
+            validator: isValidReview
+        });
+    }
+    catch {
+        review = await provider.generateJson({
+            model: config_1.CONFIG.MODEL_REVIEWER_FALLBACK || config_1.CONFIG.MODEL_REVIEWER,
+            prompt: reviewPrompt,
+            label: 'review:fallback',
+            validator: isValidReview
+        });
+    }
     if (String(review.verdict).toUpperCase() !== 'APPROVED') {
         throw new Error(review.reason || 'Reviewer rejeitou a implementação.');
     }
@@ -136,6 +168,7 @@ async function executeTask(input) {
 }
 async function runAgent() {
     acquireLock();
+    const provider = (0, models_1.getModelProvider)();
     try {
         ensureSafeStart();
         const branch = (0, git_1.ensureBranch)(nowDate());
@@ -196,7 +229,7 @@ async function runAgent() {
                 }
                 if (!memory.backlog.length) {
                     const snapshot = (0, indexer_1.buildRepoSnapshot)(repoIndex);
-                    const backlog = await (0, planner_1.createBacklog)({ blueprint, snapshot, memory, branch, repoIndex, config: config_1.CONFIG });
+                    const backlog = await (0, planner_1.createBacklog)({ blueprint, snapshot, memory, branch, repoIndex, config: config_1.CONFIG, provider });
                     memory.backlog = backlog.tasks || [];
                     memory.metrics.plannerRuns += 1;
                     (0, memory_1.saveMemory)(memory);
@@ -217,7 +250,7 @@ async function runAgent() {
                     (0, logger_1.log)('🎯 task:', task.title);
                     (0, logger_1.log)('📌 goal:', task.goal);
                     try {
-                        const result = await executeTask({ task, blueprint, memory: latestMemory });
+                        const result = await executeTask({ task, blueprint, memory: latestMemory, provider });
                         const commitMessage = result.review.suggested_commit_message || task.commit_message;
                         const committed = (0, git_1.commitAll)(commitMessage);
                         if (committed)
@@ -253,7 +286,14 @@ async function runAgent() {
                         const decisionByFailure = (0, failure_policy_1.registerFailureAndDecide)(latestMemory, task, reason, null);
                         if (decisionByFailure.action === 'replan') {
                             try {
-                                const nextTask = await (0, planner_1.replanTask)({ blueprint, task, failureSummary: reason, memory: latestMemory, config: config_1.CONFIG });
+                                const nextTask = await (0, planner_1.replanTask)({
+                                    blueprint,
+                                    task,
+                                    failureSummary: reason,
+                                    memory: latestMemory,
+                                    config: config_1.CONFIG,
+                                    provider
+                                });
                                 latestMemory.backlog = (latestMemory.backlog || []).map((item) => (item.id === task.id ? nextTask : item));
                                 (0, memory_1.saveMemory)(latestMemory);
                                 (0, logger_1.log)('🧠 task replanned:', nextTask.title);
@@ -285,6 +325,7 @@ async function runAgent() {
                 cycleMetric.endedAt = new Date(cycleEndedAt).toISOString();
                 cycleMetric.durationMs = Math.max(0, cycleEndedAt - cycleStartedAt);
                 const postCycleMemory = (0, memory_1.loadMemory)();
+                (0, memory_1.registerProviderMetrics)(postCycleMemory, provider.getMetrics());
                 (0, runtime_policy_1.registerCycleMetric)(postCycleMemory, cycleMetric);
                 postCycleMemory.runtime.endedAt = cycleMetric.endedAt;
                 (0, memory_1.saveMemory)(postCycleMemory);

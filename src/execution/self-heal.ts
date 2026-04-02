@@ -3,7 +3,8 @@ import { backupFiles, normalizeSlashes, restoreBackup } from '../core/fs-utils';
 import { rollbackHard } from '../core/git';
 import { debug, log } from '../core/logger';
 import { errorProgressScore, stableTextSignature, unique } from '../core/text';
-import { askAndParseJson } from '../models/ollama';
+import { getModelProvider } from '../models';
+import type { ModelProvider } from '../models/provider';
 import { buildSelfHealPrompt } from '../planning/prompts';
 import { compareRepoHealth } from '../repo/health';
 import { collectFileContents } from '../repo/indexer';
@@ -17,8 +18,9 @@ export async function selfHeal(input: {
   implementation: ImplementationPlan;
   memory: MemoryState;
   baselineHealth: RepoHealth;
+  provider?: ModelProvider;
 }): Promise<{ ok: boolean; implementation: ImplementationPlan; progress?: boolean; lastFailedSummary: string }> {
-  const { blueprint, task, memory, baselineHealth } = input;
+  const { blueprint, task, memory, baselineHealth, provider = getModelProvider() } = input;
   let currentImpl = input.implementation;
   let previousSummary = baselineHealth.summary || '';
   let previousSignature = stableTextSignature(previousSummary);
@@ -39,7 +41,21 @@ export async function selfHeal(input: {
 
     let fixedImpl: ImplementationPlan;
     try {
-      fixedImpl = await askAndParseJson<ImplementationPlan>(CONFIG.MODEL_FIXER, prompt, 'self-heal', isValidImplementation);
+      try {
+        fixedImpl = await provider.generateJson<ImplementationPlan>({
+          model: CONFIG.MODEL_FIXER,
+          prompt,
+          label: 'self-heal',
+          validator: isValidImplementation
+        });
+      } catch {
+        fixedImpl = await provider.generateJson<ImplementationPlan>({
+          model: CONFIG.MODEL_FIXER_FALLBACK || CONFIG.MODEL_FIXER,
+          prompt,
+          label: 'self-heal:fallback',
+          validator: isValidImplementation
+        });
+      }
     } catch (error) {
       debug('self-heal parse error:', error instanceof Error ? error.message : String(error));
       continue;

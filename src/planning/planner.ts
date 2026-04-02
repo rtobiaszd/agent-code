@@ -1,7 +1,8 @@
 import { CONFIG } from '../config';
 import { isBlockedFileName, isProtectedFile, normalizeSlashes } from '../core/fs-utils';
 import { unique } from '../core/text';
-import { askAndParseJson } from '../models/ollama';
+import { getModelProvider } from '../models';
+import type { ModelProvider } from '../models/provider';
 import { getHotFiles } from '../state/memory';
 import { buildBacklogPlannerPrompt, buildReplanPrompt } from './prompts';
 import type { AgentConfig, AgentTask, BacklogResponse, Blueprint, MemoryState, RepoIndex, RepoSnapshot } from '../types';
@@ -67,6 +68,33 @@ export function validateBacklog(
   return backlog;
 }
 
+async function generateJsonWithFallback<T>(
+  provider: ModelProvider,
+  input: {
+    primaryModel: string;
+    fallbackModel: string;
+    prompt: string;
+    label: string;
+    validator?: ((value: unknown) => value is T) | ((value: unknown) => boolean);
+  }
+): Promise<T> {
+  try {
+    return await provider.generateJson<T>({
+      model: input.primaryModel,
+      prompt: input.prompt,
+      label: input.label,
+      validator: input.validator
+    });
+  } catch {
+    return await provider.generateJson<T>({
+      model: input.fallbackModel || input.primaryModel,
+      prompt: input.prompt,
+      label: `${input.label}:fallback`,
+      validator: input.validator
+    });
+  }
+}
+
 export async function createBacklog(input: {
   blueprint: Blueprint;
   snapshot: RepoSnapshot;
@@ -74,8 +102,9 @@ export async function createBacklog(input: {
   branch: string;
   repoIndex: RepoIndex;
   config?: AgentConfig;
+  provider?: ModelProvider;
 }): Promise<BacklogResponse> {
-  const { blueprint, snapshot, memory, branch, repoIndex, config = CONFIG } = input;
+  const { blueprint, snapshot, memory, branch, repoIndex, config = CONFIG, provider = getModelProvider() } = input;
 
   const prompt = buildBacklogPlannerPrompt({
     blueprint,
@@ -86,7 +115,13 @@ export async function createBacklog(input: {
     hotFiles: getHotFiles(memory)
   });
 
-  const backlog = await askAndParseJson<BacklogResponse>(config.MODEL_PLANNER, prompt, 'backlog', isValidBacklog);
+  const backlog = await generateJsonWithFallback<BacklogResponse>(provider, {
+    primaryModel: config.MODEL_PLANNER,
+    fallbackModel: config.MODEL_PLANNER_FALLBACK,
+    prompt,
+    label: 'backlog',
+    validator: isValidBacklog
+  });
   return validateBacklog(backlog, repoIndex, memory, config);
 }
 
@@ -96,8 +131,9 @@ export async function replanTask(input: {
   failureSummary: string;
   memory: MemoryState;
   config?: AgentConfig;
+  provider?: ModelProvider;
 }): Promise<AgentTask> {
-  const { blueprint, task, failureSummary, memory, config = CONFIG } = input;
+  const { blueprint, task, failureSummary, memory, config = CONFIG, provider = getModelProvider() } = input;
 
   const prompt = buildReplanPrompt({
     blueprint,
@@ -106,7 +142,13 @@ export async function replanTask(input: {
     replanCount: Number(memory.learned.taskReplanStats?.[task.id] || 0)
   });
 
-  const nextTask = await askAndParseJson<AgentTask>(config.MODEL_PLANNER, prompt, 'task-replan', validateTaskShape);
+  const nextTask = await generateJsonWithFallback<AgentTask>(provider, {
+    primaryModel: config.MODEL_PLANNER,
+    fallbackModel: config.MODEL_PLANNER_FALLBACK,
+    prompt,
+    label: 'task-replan',
+    validator: validateTaskShape
+  });
 
   return {
     ...task,

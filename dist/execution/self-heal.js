@@ -6,14 +6,14 @@ const fs_utils_1 = require("../core/fs-utils");
 const git_1 = require("../core/git");
 const logger_1 = require("../core/logger");
 const text_1 = require("../core/text");
-const ollama_1 = require("../models/ollama");
+const models_1 = require("../models");
 const prompts_1 = require("../planning/prompts");
 const health_1 = require("../repo/health");
 const indexer_1 = require("../repo/indexer");
 const implementation_1 = require("./implementation");
 const verification_1 = require("./verification");
 async function selfHeal(input) {
-    const { blueprint, task, memory, baselineHealth } = input;
+    const { blueprint, task, memory, baselineHealth, provider = (0, models_1.getModelProvider)() } = input;
     let currentImpl = input.implementation;
     let previousSummary = baselineHealth.summary || '';
     let previousSignature = (0, text_1.stableTextSignature)(previousSummary);
@@ -29,7 +29,22 @@ async function selfHeal(input) {
         });
         let fixedImpl;
         try {
-            fixedImpl = await (0, ollama_1.askAndParseJson)(config_1.CONFIG.MODEL_FIXER, prompt, 'self-heal', implementation_1.isValidImplementation);
+            try {
+                fixedImpl = await provider.generateJson({
+                    model: config_1.CONFIG.MODEL_FIXER,
+                    prompt,
+                    label: 'self-heal',
+                    validator: implementation_1.isValidImplementation
+                });
+            }
+            catch {
+                fixedImpl = await provider.generateJson({
+                    model: config_1.CONFIG.MODEL_FIXER_FALLBACK || config_1.CONFIG.MODEL_FIXER,
+                    prompt,
+                    label: 'self-heal:fallback',
+                    validator: implementation_1.isValidImplementation
+                });
+            }
         }
         catch (error) {
             (0, logger_1.debug)('self-heal parse error:', error instanceof Error ? error.message : String(error));
