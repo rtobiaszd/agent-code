@@ -12,6 +12,19 @@ const text_1 = require("../core/text");
 const models_1 = require("../models");
 const memory_1 = require("../state/memory");
 const prompts_1 = require("./prompts");
+const DEFAULT_OWNER_AGENT = 'builder';
+function sanitizeOwnerAgent(owner, config) {
+    const normalized = String(owner || '').toLowerCase().trim();
+    return config.AGENT_ROLES.includes(normalized) ? normalized : DEFAULT_OWNER_AGENT;
+}
+function sanitizeSkillTags(skills, config) {
+    const list = Array.isArray(skills) ? skills : [];
+    const allowed = new Set(config.AGENT_SKILLS.map((item) => item.toLowerCase()));
+    return (0, text_1.unique)(list
+        .map((item) => String(item || '').toLowerCase().trim())
+        .filter(Boolean)
+        .filter((item) => allowed.has(item))).slice(0, 6);
+}
 function isValidBacklog(value) {
     return Boolean(value && typeof value === 'object' && Array.isArray(value.tasks));
 }
@@ -70,7 +83,9 @@ function validateBacklog(backlog, repoIndex, memory, config = config_1.CONFIG) {
             status: String(task.status || 'pending'),
             new_files_allowed: Boolean(task.new_files_allowed),
             commit_message: String(task.commit_message || `chore: ${task.title}`),
-            kind: task.kind
+            kind: task.kind,
+            owner_agent: sanitizeOwnerAgent(task.owner_agent, config),
+            skill_tags: sanitizeSkillTags(task.skill_tags, config)
         };
         if (!normalizedTask.files.length && !normalizedTask.new_files_allowed)
             continue;
@@ -153,6 +168,8 @@ async function replanTask(input) {
             ? nextTask.files.map(fs_utils_1.normalizeSlashes).slice(0, config.MAX_FILES_PER_TASK)
             : task.files,
         new_files_allowed: Boolean(nextTask.new_files_allowed),
-        commit_message: String(nextTask.commit_message || task.commit_message || `chore: ${nextTask.title || task.title}`)
+        commit_message: String(nextTask.commit_message || task.commit_message || `chore: ${nextTask.title || task.title}`),
+        owner_agent: sanitizeOwnerAgent(nextTask.owner_agent || task.owner_agent, config),
+        skill_tags: sanitizeSkillTags(nextTask.skill_tags || task.skill_tags, config)
     };
 }

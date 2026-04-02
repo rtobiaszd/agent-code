@@ -15,6 +15,12 @@ export interface RuntimeDecision {
   reason?: string;
 }
 
+export interface RuntimePolicyOptions {
+  maxIterations?: number;
+  maxRuntimeMs?: number;
+  loopDelayMs?: number;
+}
+
 export function createRuntimeLoopContext(): RuntimeLoopContext {
   return {
     startedAtMs: Date.now(),
@@ -23,19 +29,22 @@ export function createRuntimeLoopContext(): RuntimeLoopContext {
   };
 }
 
-export function evaluateRuntimePolicy(context: RuntimeLoopContext): RuntimeDecision {
-  if (context.iteration >= CONFIG.MAX_ITERATIONS) {
+export function evaluateRuntimePolicy(context: RuntimeLoopContext, options: RuntimePolicyOptions = {}): RuntimeDecision {
+  const maxIterations = Number(options.maxIterations ?? CONFIG.MAX_ITERATIONS);
+  const maxRuntimeMs = Number(options.maxRuntimeMs ?? CONFIG.MAX_RUNTIME_MS);
+
+  if (context.iteration >= maxIterations) {
     return {
       shouldContinue: false,
-      reason: `max_iterations_reached:${CONFIG.MAX_ITERATIONS}`
+      reason: `max_iterations_reached:${maxIterations}`
     };
   }
 
   const elapsedMs = Date.now() - context.startedAtMs;
-  if (elapsedMs >= CONFIG.MAX_RUNTIME_MS) {
+  if (elapsedMs >= maxRuntimeMs) {
     return {
       shouldContinue: false,
-      reason: `max_runtime_reached:${CONFIG.MAX_RUNTIME_MS}ms`
+      reason: `max_runtime_reached:${maxRuntimeMs}ms`
     };
   }
 
@@ -61,9 +70,9 @@ export function registerCycleMetric(memory: MemoryState, metric: RuntimeCycleMet
   }
 }
 
-export async function delayBetweenCycles(): Promise<void> {
-  if (CONFIG.LOOP_DELAY_MS <= 0) return;
+export async function delayBetweenCycles(loopDelayMs: number = CONFIG.LOOP_DELAY_MS): Promise<void> {
+  if (loopDelayMs <= 0) return;
   await new Promise<void>((resolve) => {
-    setTimeout(resolve, CONFIG.LOOP_DELAY_MS);
+    setTimeout(resolve, loopDelayMs);
   });
 }

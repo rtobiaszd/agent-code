@@ -24,6 +24,10 @@ import type { AgentTask, ExecutionPreview, HumanApprovalResponse, Implementation
 
 export interface RunAgentOptions {
   requestHumanApproval?: (preview: ExecutionPreview) => Promise<HumanApprovalResponse>;
+  maxCycles?: number;
+  runtimeOverrides?: Partial<
+    Pick<typeof CONFIG, 'MAX_ITERATIONS' | 'MAX_RUNTIME_MS' | 'LOOP_DELAY_MS' | 'REPLAN_INTERVAL_CYCLES' | 'CRITICAL_FAILURE_REPLAN_THRESHOLD'>
+  >;
 }
 
 function lockFile(): string {
@@ -137,9 +141,15 @@ export function explainTaskSelection(memory: MemoryState): string {
   ].join('\n');
 }
 
-function shouldTriggerPeriodicReplan(iteration: number, memory: MemoryState): boolean {
-  const byCycle = iteration % Math.max(1, CONFIG.REPLAN_INTERVAL_CYCLES) === 0;
-  const byCriticalFailure = Number(memory.runtime.consecutiveCycleFailures || 0) >= CONFIG.CRITICAL_FAILURE_REPLAN_THRESHOLD;
+function shouldTriggerPeriodicReplan(
+  iteration: number,
+  memory: MemoryState,
+  options?: { replanIntervalCycles?: number; criticalFailureReplanThreshold?: number }
+): boolean {
+  const replanInterval = Number(options?.replanIntervalCycles ?? CONFIG.REPLAN_INTERVAL_CYCLES);
+  const criticalThreshold = Number(options?.criticalFailureReplanThreshold ?? CONFIG.CRITICAL_FAILURE_REPLAN_THRESHOLD);
+  const byCycle = iteration % Math.max(1, replanInterval) === 0;
+  const byCriticalFailure = Number(memory.runtime.consecutiveCycleFailures || 0) >= criticalThreshold;
   return byCycle || byCriticalFailure;
 }
 
@@ -352,6 +362,15 @@ async function enforceHumanApproval(input: {
 export async function runAgent(options: RunAgentOptions = {}): Promise<void> {
   acquireLock();
   const provider = getModelProvider();
+  const runtimeConfig = {
+    maxIterations: Number(options.runtimeOverrides?.MAX_ITERATIONS ?? CONFIG.MAX_ITERATIONS),
+    maxRuntimeMs: Number(options.runtimeOverrides?.MAX_RUNTIME_MS ?? CONFIG.MAX_RUNTIME_MS),
+    loopDelayMs: Number(options.runtimeOverrides?.LOOP_DELAY_MS ?? CONFIG.LOOP_DELAY_MS),
+    replanIntervalCycles: Number(options.runtimeOverrides?.REPLAN_INTERVAL_CYCLES ?? CONFIG.REPLAN_INTERVAL_CYCLES),
+    criticalFailureReplanThreshold: Number(
+      options.runtimeOverrides?.CRITICAL_FAILURE_REPLAN_THRESHOLD ?? CONFIG.CRITICAL_FAILURE_REPLAN_THRESHOLD
+    )
+  };
 
   try {
     ensureSafeStart();
@@ -370,7 +389,27 @@ export async function runAgent(options: RunAgentOptions = {}): Promise<void> {
     saveMemory(memoryAtStart);
 
     while (true) {
-      const decision = evaluateRuntimePolicy(runtime);
+      if (typeof options.maxCycles === 'number' && options.maxCycles > 0 && runtime.iteration >= options.maxCycles) {
+        const memory = loadMemory();
+        const nowIso = new Date().toISOString();
+        const stopMetric: RuntimeCycleMetric = {
+          cycle: runtime.iteration + 1,
+          startedAt: nowIso,
+          endedAt: nowIso,
+          durationMs: 0,
+          result: 'stopped',
+          reason: `max_cycles_reached:${options.maxCycles}`
+        };
+        registerCycleMetric(memory, stopMetric);
+        memory.runtime.endedAt = nowIso;
+        saveMemory(memory);
+        break;
+      }
+
+      const decision = evaluateRuntimePolicy(runtime, {
+        maxIterations: runtimeConfig.maxIterations,
+        maxRuntimeMs: runtimeConfig.maxRuntimeMs
+      });
       if (!decision.shouldContinue) {
         const memory = loadMemory();
         const nowIso = new Date().toISOString();
@@ -419,7 +458,13 @@ export async function runAgent(options: RunAgentOptions = {}): Promise<void> {
           log('🛠️ repo unhealthy, entering stabilization mode');
         }
 
-        if (!memory.backlog.length || shouldTriggerPeriodicReplan(runtime.iteration, memory)) {
+        if (
+          !memory.backlog.length ||
+          shouldTriggerPeriodicReplan(runtime.iteration, memory, {
+            replanIntervalCycles: runtimeConfig.replanIntervalCycles,
+            criticalFailureReplanThreshold: runtimeConfig.criticalFailureReplanThreshold
+          })
+        ) {
           await refreshBacklogFromPlanner({ blueprint, memory, branch, repoIndex, provider });
         }
 
@@ -554,7 +599,7 @@ export async function runAgent(options: RunAgentOptions = {}): Promise<void> {
         runtime.consecutiveFailures = postCycleMemory.runtime.consecutiveCycleFailures;
       }
 
-      await delayBetweenCycles();
+      await delayBetweenCycles(runtimeConfig.loopDelayMs);
     }
   } finally {
     try {

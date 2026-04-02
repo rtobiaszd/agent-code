@@ -14,18 +14,20 @@ function createRuntimeLoopContext() {
         consecutiveFailures: 0
     };
 }
-function evaluateRuntimePolicy(context) {
-    if (context.iteration >= config_1.CONFIG.MAX_ITERATIONS) {
+function evaluateRuntimePolicy(context, options = {}) {
+    const maxIterations = Number(options.maxIterations ?? config_1.CONFIG.MAX_ITERATIONS);
+    const maxRuntimeMs = Number(options.maxRuntimeMs ?? config_1.CONFIG.MAX_RUNTIME_MS);
+    if (context.iteration >= maxIterations) {
         return {
             shouldContinue: false,
-            reason: `max_iterations_reached:${config_1.CONFIG.MAX_ITERATIONS}`
+            reason: `max_iterations_reached:${maxIterations}`
         };
     }
     const elapsedMs = Date.now() - context.startedAtMs;
-    if (elapsedMs >= config_1.CONFIG.MAX_RUNTIME_MS) {
+    if (elapsedMs >= maxRuntimeMs) {
         return {
             shouldContinue: false,
-            reason: `max_runtime_reached:${config_1.CONFIG.MAX_RUNTIME_MS}ms`
+            reason: `max_runtime_reached:${maxRuntimeMs}ms`
         };
     }
     if (context.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
@@ -47,10 +49,10 @@ function registerCycleMetric(memory, metric) {
         memory.runtime.consecutiveCycleFailures = 0;
     }
 }
-async function delayBetweenCycles() {
-    if (config_1.CONFIG.LOOP_DELAY_MS <= 0)
+async function delayBetweenCycles(loopDelayMs = config_1.CONFIG.LOOP_DELAY_MS) {
+    if (loopDelayMs <= 0)
         return;
     await new Promise((resolve) => {
-        setTimeout(resolve, config_1.CONFIG.LOOP_DELAY_MS);
+        setTimeout(resolve, loopDelayMs);
     });
 }

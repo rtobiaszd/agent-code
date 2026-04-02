@@ -1,5 +1,6 @@
 export type TaskCategory = 'security' | 'performance' | 'product' | 'optimization' | 'bugfix' | 'refactor' | 'dx' | 'tests';
 export type TaskPriority = 'high' | 'medium' | 'low';
+export type TaskOwnerAgent = 'architect' | 'builder' | 'reviewer' | 'qa' | 'security';
 export type TaskRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export type TaskStatus = 'pending' | 'ready' | 'blocked' | 'in_progress' | 'done' | 'failed';
 export type FailureClassification = 'replanable' | 'healable' | 'stabilization' | 'fatal' | 'unknown';
@@ -33,6 +34,10 @@ export interface AgentConfig {
   AUTO_BRANCH: boolean;
   ASSISTED_MODE: boolean;
   BRANCH_PREFIX: string;
+  BLUEPRINT_BRANCH_PREFIX: string;
+  WEB_PORT: number;
+  AGENT_ROLES: string[];
+  AGENT_SKILLS: string[];
   MAX_ITERATIONS: number;
   MAX_RUNTIME_MS: number;
   LOOP_DELAY_MS: number;
@@ -108,6 +113,8 @@ export interface AgentTask {
   new_files_allowed: boolean;
   commit_message: string;
   kind?: 'stabilization' | string;
+  owner_agent?: TaskOwnerAgent | string;
+  skill_tags?: string[];
 }
 
 export interface BacklogResponse {

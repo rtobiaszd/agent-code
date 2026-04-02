@@ -6,6 +6,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CONFIG = void 0;
 exports.repoPath = repoPath;
 const path_1 = __importDefault(require("path"));
+function parseCsv(value, fallback) {
+    const items = value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    return items.length ? items : fallback;
+}
 exports.CONFIG = {
     REPO_PATH: process.env.REPO_PATH || process.cwd(),
     BLUEPRINT_FILE: process.env.BLUEPRINT_FILE || 'BLUEPRINT.md',
@@ -32,6 +39,10 @@ exports.CONFIG = {
     AUTO_BRANCH: String(process.env.AUTO_BRANCH || 'true').toLowerCase() === 'true',
     ASSISTED_MODE: String(process.env.ASSISTED_MODE || 'false').toLowerCase() === 'true',
     BRANCH_PREFIX: process.env.BRANCH_PREFIX || 'agent/autonomous/test',
+    BLUEPRINT_BRANCH_PREFIX: process.env.BLUEPRINT_BRANCH_PREFIX || 'agent/blueprint',
+    WEB_PORT: Number(process.env.WEB_PORT || 3030),
+    AGENT_ROLES: parseCsv(process.env.AGENT_ROLES || '', ['architect', 'builder', 'reviewer', 'qa', 'security']),
+    AGENT_SKILLS: parseCsv(process.env.AGENT_SKILLS || '', ['planning', 'coding', 'review', 'testing', 'security', 'refactor', 'performance', 'documentation']),
     MAX_ITERATIONS: Number(process.env.MAX_ITERATIONS || 999999999),
     MAX_RUNTIME_MS: Number(process.env.MAX_RUNTIME_MS || 60 * 60 * 1000),
     LOOP_DELAY_MS: Number(process.env.LOOP_DELAY_MS || 5000),
@@ -63,8 +74,8 @@ exports.CONFIG = {
     IGNORE_UNTRACKED_PROTECTED_FILES_ONLY: String(process.env.IGNORE_UNTRACKED_PROTECTED_FILES_ONLY || 'true').toLowerCase() === 'true',
     DEBUG: String(process.env.DEBUG || 'false').toLowerCase() === 'true',
     IGNORE_DIRS: ['.git', 'node_modules', 'dist', 'build', '.next', 'coverage', '.turbo', '.cache', '.idea', '.vscode', 'vendor', 'storage', 'tmp', 'temp'],
-    IGNORE_FILES: ['.agent-lock', '.agent-memory.json', '.agent-snapshot.json', 'tmp.patch', 'agent3.cjs', 'agent4.cjs', 'agent5.cjs', 'agent6.cjs', 'agent7.cjs', 'agent7-stable.cjs'],
-    PROTECTED_FILES: ['.agent-lock', '.agent-memory.json', '.agent-snapshot.json', 'tmp.patch', 'agent3.cjs', 'agent4.cjs', 'agent5.cjs', 'agent6.cjs', 'agent7.cjs', 'agent7-stable.cjs', 'BLUEPRINT.md'],
+    IGNORE_FILES: ['.agent-lock', '.agent-memory.json', '.agent-snapshot.json', '.agent-web-settings.json', 'tmp.patch', 'agent3.cjs', 'agent4.cjs', 'agent5.cjs', 'agent6.cjs', 'agent7.cjs', 'agent7-stable.cjs'],
+    PROTECTED_FILES: ['.agent-lock', '.agent-memory.json', '.agent-snapshot.json', '.agent-web-settings.json', 'tmp.patch', 'agent3.cjs', 'agent4.cjs', 'agent5.cjs', 'agent6.cjs', 'agent7.cjs', 'agent7-stable.cjs', 'BLUEPRINT.md'],
     BLOCKED_FILE_NAMES: ['.env', '.env.example', '.env.local', '.env.development', '.env.test', '.env.production', '.npmrc', '.yarnrc', '.pnpmrc'],
     SPECIAL_ALLOWED_FILES: ['.gitignore', '.eslintrc', '.eslintrc.js', '.eslintrc.cjs', '.prettierrc', '.prettierrc.js', '.prettierrc.cjs', 'eslint.config.js', 'eslint.config.cjs', 'eslint.config.mjs'],
     ALLOWED_EXTENSIONS: ['.js', '.cjs', '.mjs', '.ts', '.tsx', '.jsx', '.json', '.md', '.yml', '.yaml', '.sql', '.css', '.scss', '.prisma', '.html'],
